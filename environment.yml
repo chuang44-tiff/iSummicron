@@ -1,0 +1,31 @@
+name: isummicron
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+
+  # Core render path
+  - numpy>=1.26
+  - scipy>=1.11
+  - pillow>=10
+  - pillow-heif>=0.20
+
+  # Dev tooling (tests + lint)
+  - pytest>=8
+  - ruff
+
+  - pip
+  - pip:
+      # Monocular depth (Apple-Silicon-friendly Torch + Depth Anything V2)
+      - torch>=2.4
+      - torchvision>=0.19
+      - transformers>=4.45
+      - huggingface_hub>=0.24
+      # macOS-only HDR access via Core Image (CIToneMapHeadroom).
+      # Quartz re-exports CIImage / CIContext; no separate CoreImage wheel.
+      - 'pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"'
+
+# After `conda env create -f environment.yml`, run:
+#   conda activate isummicron
+#   pip install -e .
+# to put the `isummicron` console script on PATH.

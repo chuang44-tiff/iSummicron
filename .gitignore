@@ -1,0 +1,53 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv*/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.DS_Store
+
+# Build artifacts
+*.npz.tmp
+
+# Corpus data is never committed.
+# No trailing slash so this also matches a symlink pointing at a NAS mount.
+corpus
+corpus_*
+
+# Run artifacts — every CLI output (inventory, harvest reports, sidecars,
+# full-corpus dumps) lives under /runs/ at the repo root. This whole tree
+# is generated data, not source, and contains corpus filenames — never
+# committed. See HOW_TO_USE.md for the layout.
+# Use /runs/* rather than /runs/ so git still traverses the dir and can
+# honor negation rules below.
+/runs/*
+
+# Track only the canonical-bench spec doc (source of truth for bench renders).
+# The actual bench image outputs stay ignored — they're regenerated per-machine.
+!/runs/vibe_bench/
+/runs/vibe_bench/*
+!/runs/vibe_bench/README.md
+
+.cache/
+
+# Raw image formats — defensive, in case any land outside the corpus dir.
+*.DNG
+*.dng
+*.HEIC
+*.heic
+*.CR2
+*.NEF
+*.RW2
+*.ARW
+*.RAF
+
+# iPhone test images — tracked so they're available on all dev machines.
+# The negation rules below override the *.HEIC and *.heic rules above.
+!iphoneImage/
+!iphoneImage/**
+!iphoneImage/*.HEIC
+!iphoneImage/*.heic
