@@ -2,6 +2,42 @@
 
 All notable changes to **iSummicron** are documented in this file. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.5.0] — 2026-11-12
+
+### Breaking
+
+- **The bundled PSF tensor is replaced.** The wheel now ships two ray-traced tensors built with optiland (PyPI package `optiland`): `psf_lens35_us3006249_fu0.4.npz` (default; a 35 mm f/2 ray-traced from the expired US patent 3,006,249, Example II) and `psf_lens50_doublegauss_fu0.4.npz` (a 50 mm f/2 double-Gauss from the optiland sample prescription). The previous bundled tensor is gone. **All render output changes.**
+- `--kernel-family` (any value), `--lens-aperture-mm` (any value, including the presets `35/2`, `50/2` and `apple`) and `--psf-norm` (any value) are removed. They fail with exit 2 and a one-line error that points to this note. The run-time synthetic disc family they selected is gone.
+- `RenderOptions(kernel_family=..., lens_aperture_mm=..., psf_norm=...)` raises `TypeError`; use `lens=`. `RenderOptions.canonical_bench(old_look=...)` is removed.
+- The auto depth gain under `--depth-mapping diopter` is now a fixed 1.0 (physical), and `--bright-stamp auto` is now `l1` (gain 2.0), including monocular inputs. The 0.4 data-dependent auto gain is not reproducible; the nearest flags are `--bright-stamp peak --depth-gain N`.
+
+### Added
+
+- `--lens {35,50}` (default `35`) selects the bundled tensor. `--lens` and `--tensor` are mutually exclusive.
+- `--tensor PATH` takes a tensor built with the new reproducible build in `scripts/build_psf/` (environment: `environment-optiland.yml`; run it with `conda run -n optiland python scripts/build_psf/build_raytrace_tensor.py --help`). optiland is used offline only; the render path never imports it.
+- The two lens prescriptions as JSON in `scripts/build_psf/lenses/` and the field-dependent PSF tracing gates in `scripts/build_psf/_gates.py`.
+
+### Migrating to 0.5.0
+
+| If you used | Now |
+|---|---|
+| `--kernel-family` (any value, or no flag) | Remove the flag. The default is `--lens 35`. |
+| `--lens-aperture-mm MM` or a preset (`35/2`, `50/2`, `apple`) | Removed. The two lenses are fixed ray-traced designs; pick `--lens 35` or `--lens 50`. |
+| `--tensor` pointing at the old bundled tensor file | Fails with "tensor not found". Drop the flag, or build a tensor with `scripts/build_psf/`. A copy of the old tensor kept at another path may still load, but it is not supported. |
+| `--psf-norm l1` / `--psf-norm peak` | Removed (L1 is the only normalisation; `peak` rendered dark with a halo). Any use exits 2 with one line pointing here. `RenderOptions(psf_norm=...)` and `render(psf_norm=...)` raise `TypeError`. Just drop the flag. |
+| `--bright-stamp auto` | Now `l1` (gain 2.0). For the old peak stamp pass `--bright-stamp peak`. |
+| `--depth-gain auto` (diopter) | Now 1.0. Pass `--depth-gain N` for another value. |
+| `RenderOptions(kernel_family=..., lens_aperture_mm=...)` | `RenderOptions(lens="35"|"50")`. |
+| The old synthetic cache `~/Library/Caches/isummicron/synth` | Safe to delete. `ISUMMICRON_CACHE_DIR` is no longer read. |
+
+- Pre-0.5.0 pins and renders no longer reproduce; the pins are re-taken on the new tensors.
+- Images without a LiDAR depth image use monocular depth with linear mapping. Results with the new tensors on such images are unvalidated in 0.5.0.
+
+### Notes
+
+- Occlusion compositing stays off by default: even with real-lens blur it only changes a hairline along the subject's outline and is not visible at normal viewing, while costing about 30–60% more render time (1.3–1.6×); guided depth and the in-focus snap already keep subject edges clean. Use `--occlusion-compositing on` for scenes with very bright light directly behind the subject's outline.
+- The README and `docs/` are rewritten around the new lenses, with a new `docs/how-it-works.md`. The figures and an interactive page, `isummicron_pipeline.html`, are attached to the release.
+
 ## [0.4.0] — 2026-11-12
 
 ### Changed
@@ -91,6 +127,7 @@ JPG output is bit-exact at md5 level across 0.1.0 ↔ 0.2.0 on the canonical ben
 - Bring-your-own-tensor format documented in README.
 - Memory guard rejects pathological renders with actionable `--downres N` suggestion.
 
+[0.5.0]: https://github.com/chuang44-tiff/iSummicron/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/chuang44-tiff/iSummicron/releases/tag/v0.4.0
 [0.3.0]: https://github.com/chuang44-tiff/iSummicron/releases/tag/v0.3.0
 [0.2.0]: https://github.com/chuang44-tiff/iSummicron/compare/v0.1.0...v0.2.0

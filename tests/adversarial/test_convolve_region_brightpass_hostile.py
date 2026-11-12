@@ -310,20 +310,6 @@ def test_hostile_r_blend_with_region_aware(rb):
     assert np.all(np.isfinite(lin))
 
 
-# Probe #14 — psf_norm='peak' + region-aware: peak path uses bright_weight too.
-def test_hostile_psf_norm_peak_with_region_aware():
-    rng = np.random.default_rng(14)
-    img = rng.uniform(0.0, 0.95, (48, 48, 3)).astype(np.float32)
-    img[20:28, 20:28, :] = 0.95
-    dm = np.full((48, 48), 0.5, dtype=np.float32)
-    out, lin = render_with_defocus(
-        img, _blur_tensor(), dmap=dm,
-        psf_norm="peak", bright_thresh=0.5,
-        bright_pass_region_size=15, bright_pass_floor=0.10,
-    )
-    assert np.all(np.isfinite(lin))
-
-
 # Probe #15 — concurrent monocular depth_m path (DA2-like): same render() entry,
 # no separate code path, but verifies depth_m + region-aware does not crash.
 def test_hostile_depth_m_monocular_with_region_aware():

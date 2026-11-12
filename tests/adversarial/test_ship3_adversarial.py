@@ -217,15 +217,7 @@ def test_python_m_removed_package_fails_cleanly() -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("mod", ["downscale_tensor", "codev_to_render"])
-def test_kept_psf_model_tool_help_exits_0(mod: str) -> None:
-    r = subprocess.run([sys.executable, "-m", f"summicron.psf_model.{mod}", "--help"],
-                       capture_output=True, text=True, timeout=120, cwd=REPO)
-    assert r.returncode == 0, r.stderr
-    assert "usage" in r.stdout.lower()
-
-
-@pytest.mark.parametrize("mod", ["downscale_tensor", "codev_to_render", "__init__"])
+@pytest.mark.parametrize("mod", ["ray_kernel", "__init__"])
 def test_kept_psf_model_files_import_no_removed_module(mod: str) -> None:
     bad = [(ln, n) for ln, n in _imports_in(PKG / "psf_model" / f"{mod}.py")
            if _is_removed_import(n)]
@@ -234,7 +226,7 @@ def test_kept_psf_model_files_import_no_removed_module(mod: str) -> None:
 
 def test_psf_model_package_has_only_kept_modules() -> None:
     py = sorted(p.stem for p in (PKG / "psf_model").glob("*.py"))
-    assert py == ["__init__", "codev_to_render", "downscale_tensor", "synth_family"]
+    assert py == ["__init__", "ray_kernel"]
 
 
 # --------------------------------------------------------------------------
@@ -326,7 +318,7 @@ def test_wheel_contents(tmp_path) -> None:
            or any(n == f"summicron/psf_model/{m}.py" for m in REMOVED_PSF_MODEL)
            or n.endswith(".pyc")]
     assert bad == [], bad
-    assert "summicron/_artifacts/codev_render_v1.npz" in names
-    assert "summicron/psf_model/downscale_tensor.py" in names
-    assert "summicron/psf_model/codev_to_render.py" in names
+    assert "summicron/_artifacts/psf_lens35_us3006249_fu0.4.npz" in names
+    assert "summicron/_artifacts/psf_lens50_doublegauss_fu0.4.npz" in names
+    assert "summicron/psf_model/ray_kernel.py" in names
     assert not any(n.startswith("tests/") for n in names)

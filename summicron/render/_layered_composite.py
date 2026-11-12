@@ -59,7 +59,7 @@ buffer, sub-PSF spike scrub, π·r_min² area gate). ``_layered_composite`` runs
 the diffuse decomposition BEFORE the ``:2028`` bright recombine, so
 R-highlight-guard can insert the global L1 bright buffer + per-layer scrub
 without re-plumbing the composite. ``r_min`` MUST be plumbed from the
-*pre-delta* focus PSF at ``codev_to_render.py:145`` — NOT ``kernels[:, 0]``
+*pre-delta* focus PSF (before the S2 delta install) — NOT ``kernels[:, 0]``
 (the S2 delta-guard trap). See the ``r_min`` plumbing stub below.
 """
 from __future__ import annotations
@@ -183,7 +183,7 @@ def _disocclusion_fill(premult_color: np.ndarray, matte: np.ndarray) -> np.ndarr
 def _over_scatter_slab(
     *, d_idx, premult_pad, matte_pad, basis_w, wedge_idx,
     kernels, defocus_ratios, kH, kW, pad, pix_scale, scaled_ksize,
-    psf_norm, H, W, fft_state, conv_c, conv_a, cancel,
+    H, W, fft_state, conv_c, conv_a, cancel,
 ):
     """Q-e: fused colour+matte OVER scatter for ONE slab (the only OVER scatter).
 
@@ -193,7 +193,7 @@ def _over_scatter_slab(
     with the discarded bright / ``wsum`` outputs removed. It MIRRORS the
     ``fft_state is None`` branch of ``convolve._apply_kernel`` minus the bright
     pass: same ``_build_basis_kernel`` call, same ``theta_a``/``rot_deg``,
-    ``ndimage_rotate(order=1)``, ``np.maximum(., 0)`` and ``psf_norm`` renorm,
+    ``ndimage_rotate(order=1)``, ``np.maximum(., 0)`` and L1 renorm,
     same ``ri``-outer / ``a``-inner loop and skip predicates.
 
     DRIFT WARNING: any change to that branch's kernel build, rotate or
@@ -276,7 +276,7 @@ def _over_scatter_slab(
             continue
         kernel_base = _build_basis_kernel(
             ri, d_idx, True, defocus_ratios, kernels,
-            kH, kW, psf_norm, pix_scale, scaled_ksize,
+            kH, kW, pix_scale, scaled_ksize,
         )
         if kernel_base.max() > 0.5 * kernel_base.sum():  # is_delta
             if w.max() < 0.01:
@@ -295,10 +295,7 @@ def _over_scatter_slab(
             rot_deg = -(theta_a * 180.0 / np.pi + 90.0)
             rotated = ndimage_rotate(kernel_base, rot_deg, reshape=False, order=1)
             rotated = np.maximum(rotated, 0.0)
-            if psf_norm == "l1":
-                rotated /= rotated.sum() + 1e-12
-            else:
-                rotated /= max(float(rotated.max()), 1e-10)
+            rotated /= rotated.sum() + 1e-12
             # ON_MD5: named local, never an inline rfft2 operand.
             ker_F = sp_fft.rfft2(rotated, s=fshape)
             _acc(ker_F, w_ang)
@@ -324,7 +321,6 @@ def _layered_composite(
     pad: int,
     pix_scale: float,
     scaled_ksize: int,
-    psf_norm: str,
     H: int,
     W: int,
     fft_state: dict | None,
@@ -351,7 +347,7 @@ def _layered_composite(
     sub-PSF spike scrub HERE, between the diffuse decomposition and the
     caller's bright recombine. ``r_min`` (the in-focus PSF support radius used
     by the π·r_min² area gate) MUST be read from the *pre-delta* focus PSF at
-    ``codev_to_render.py:145`` — NOT ``kernels[:, 0]`` (the S2 delta-guard
+    (before the S2 delta install) — NOT ``kernels[:, 0]`` (the S2 delta-guard
     trap zeroes the focus slice to a single-pixel delta). The hook point is
     the ``output_bright`` assembly below; it is intentionally left
     OFF-verbatim this round so R-highlight-guard owns the bright path.
@@ -384,7 +380,7 @@ def _layered_composite(
         radial_frac_map=radial_frac_map, r_centers=r_centers,
         wedge_idx=wedge_idx,
         kH=kH, kW=kW, pad=pad, pix_scale=pix_scale,
-        scaled_ksize=scaled_ksize, psf_norm=psf_norm, H=H, W=W,
+        scaled_ksize=scaled_ksize, H=H, W=W,
         fft_state=fft_state, slab_batch_size=slab_batch_size,
         on_progress=on_progress, cancel=cancel,
         emit_log=False, bright_stamp_gain=bright_stamp_gain,
@@ -545,7 +541,7 @@ def _layered_composite(
                 basis_w=basis_w, wedge_idx=wedge_idx,
                 kernels=kernels, defocus_ratios=defocus_ratios,
                 kH=kH, kW=kW, pad=pad, pix_scale=pix_scale,
-                scaled_ksize=scaled_ksize, psf_norm=psf_norm, H=H, W=W,
+                scaled_ksize=scaled_ksize, H=H, W=W,
                 fft_state=fft_state, conv_c=conv_c, conv_a=conv_a,
                 cancel=cancel,
             )

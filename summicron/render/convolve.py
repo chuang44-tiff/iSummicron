@@ -13,6 +13,7 @@ import os
 import sys
 import threading
 import warnings
+import zipfile
 from pathlib import Path
 from typing import Callable
 
@@ -39,7 +40,7 @@ class TensorValidationError(ValueError):
 # P1.audit Item 4: schema_version compatibility. Bumped when the on-disk
 # tensor layout changes incompatibly. Older tensors without a
 # `schema_version` key load with a one-time warning to preserve back-compat
-# for the canonical CodeV tensor (no key today).
+# for pre-0.5 tensors (no key).
 _SUPPORTED_TENSOR_SCHEMAS = ("1.0",)
 
 # P1.audit Item 3: progress callback type alias. Bound at module level so
@@ -90,38 +91,20 @@ _BRIGHT_KNEE = 0.20
 # defocus ratio below this snap to the in-focus (identity) kernel.
 D_KNEE_LAYERED = 0.10
 
-# S22 S1: the same knee expressed physically (diopters). 0.10 on the shipped
-# 11-node geometric axis IS the diopter offset of node 1:
-# 1/0.7 - 1/object_distances_m[1] (a rounded 0.407 would move every pin).
-KNEE_DIOPTER = 0.4069058433696242
-_SYNTH_FAMILY_NAME = "synthetic_disc_v0"
 
-
-def _physical_knee_ratio(
-    object_distances_m, defocus_ratios, focus_m, knee_diopter=KNEE_DIOPTER
-) -> float:
-    """Identity-snap knee as a defocus-ratio: where ``knee_diopter`` of
-    defocus sits on the tensor's own axis (clamped to the axis by ``np.interp``).
-
-    On the shipped geometric axis this is exactly ``D_KNEE_LAYERED``; on the
-    16-node uniform-diopter synthetic family it is ~0.2952 (the ratio-0.10
-    knee would protect only 0.14 D there).
-    """
-    od = np.asarray(object_distances_m, dtype=np.float64)
-    ratios = np.asarray(defocus_ratios, dtype=np.float64)
-    knee = float(np.interp(knee_diopter, 1.0 / float(focus_m) - 1.0 / od, ratios))
-    if not knee > 0.0:
-        # Degenerate axis (first node already beyond the knee diopter): a zero
-        # knee gives dmap/0 -> NaN alpha. Fall back to the codev knee.
-        return D_KNEE_LAYERED
-    return knee
+def _make_delta(size: int) -> np.ndarray:
+    """Exact single-pixel delta at the geometric centre (``size // 2``),
+    float32 (renderer's odd-grid convention)."""
+    k = np.zeros((size, size), dtype=np.float32)
+    k[size // 2, size // 2] = 1.0
+    return k
 
 
 def _bright_stamp(rotated, gain):
     """Bright-pass stamp kernel. ``gain is None`` = peak stamp (today's
     arithmetic, verbatim: the divide, NOT a reciprocal multiply). A float
     ``gain`` = L1 stamp: the L1-normalised kernel times ``gain`` (energy
-    conserving; ``rotated`` is L1 = 1 under ``psf_norm l1``)."""
+    conserving; ``rotated`` is L1 = 1)."""
     if gain is None:
         return rotated / max(float(rotated.max()), 1e-10)
     return rotated * np.float32(gain)
@@ -714,15 +697,16 @@ def _compute_region_aware_bright_weight(
 # ---------------------------------------------------------------------------
 
 def _is_default_tensor(path) -> bool:
-    """True iff ``path`` resolves to the wheel-shipped canonical tensor.
+    """True iff ``path`` resolves to one of the wheel-shipped tensors.
 
     Never raises: a missing artifact / unresolvable path is simply "not the
     default" (so the schema_version warning still fires for foreign files).
     """
     try:
-        from summicron.render._artifacts import default_tensor_path
+        from summicron.render._artifacts import LENS_ARTIFACTS, default_tensor_path
 
-        return Path(path).resolve() == default_tensor_path().resolve()
+        p = Path(path).resolve()
+        return any(p == default_tensor_path(k).resolve() for k in LENS_ARTIFACTS)
     except (OSError, ValueError, FileNotFoundError, TypeError):
         return False
 
@@ -741,7 +725,7 @@ def load_tensor(path: str | Path) -> dict:
     - Required-keys check up-front with a typed
       :class:`TensorValidationError`.
     - Optional ``schema_version`` key: missing ⇒ warn (preserves back-compat
-      for the existing in-tree CodeV tensor); unknown value ⇒ raise.
+      for hand-built tensors); unknown value ⇒ raise.
     - Square + odd kernel check (basis path requires odd ``kH``).
     - Finite + monotonic ``radial_edges`` and ``defocus_ratios``.
     - Positive-finite ``object_distances_m`` + ``corpus_ref_long_edge``.
@@ -749,16 +733,21 @@ def load_tensor(path: str | Path) -> dict:
       than strict ``==`` (regenerator-precision robustness).
     """
     # P1.audit Item 4: reject pickled object arrays from untrusted sources.
-    data = np.load(str(path), allow_pickle=False)
+    try:
+        data = np.load(str(path), allow_pickle=False)
+    except (EOFError, zipfile.BadZipFile) as e:
+        raise TensorValidationError(
+            f"load_tensor({path}): not a readable tensor .npz "
+            f"({type(e).__name__}: {e}); the file is empty or truncated"
+        ) from e
 
     # Required keys gate (P1.audit Item 4). Surface ALL missing keys at once
     # so the user sees a complete rebuild list in a single error.
     # NOTE: object_distances_m, focus_distance_m, corpus_ref_long_edge are
     # OPTIONAL on read with sensible defaults — many in-tree test fixtures
     # and intermediate (pre-downscale) tensors omit them, and the existing
-    # code paths have established back-compat semantics (see
-    # tests/adversarial/test_downscale_tensor_adversarial.py
-    # ::test_load_tensor_back_compat_missing_corpus_ref). When PRESENT,
+    # code paths have established back-compat semantics (covered by the
+    # missing-corpus-ref back-compat test). When PRESENT,
     # they are still validated for finite/monotonic/positive constraints
     # below.
     required = ("kernels", "radial_edges", "defocus_ratios")
@@ -770,8 +759,7 @@ def load_tensor(path: str | Path) -> dict:
         )
 
     # schema_version: optional with one-time warning if missing; error on
-    # unknown value. Preserves back-compat for the in-tree CodeV tensor
-    # (which has no schema_version key today).
+    # unknown value. Preserves back-compat for tensors without the key.
     if "schema_version" in data.files:
         sv = data["schema_version"]
         sv_str = (
@@ -783,8 +771,7 @@ def load_tensor(path: str | Path) -> dict:
                 f"supported={list(_SUPPORTED_TENSOR_SCHEMAS)}"
             )
     elif not _is_default_tensor(path):
-        # CLI-1b: the wheel-shipped canonical tensor is known-legacy; only
-        # foreign tensors warrant the notice.
+        # Only foreign tensors warrant the notice.
         warnings.warn(
             f"load_tensor({path}): tensor has no `schema_version` key; "
             f"assuming legacy 1.0 layout. Future tensors should declare "
@@ -816,7 +803,7 @@ def load_tensor(path: str | Path) -> dict:
         )
     # Odd-sided check is a render-path constraint (basis path centres
     # padding); raw pre-downscale intermediate tensors are commonly
-    # even-sized (e.g. 2048x2048 from CodeV) and load_tensor is also
+    # even-sized (e.g. 2048x2048) and load_tensor is also
     # called on those by tests + downscale tooling. Warn-only at load
     # time; the basis-kernel builder will error with a localised message
     # if it actually receives an even-sided tensor at render time.
@@ -865,7 +852,7 @@ def load_tensor(path: str | Path) -> dict:
         )
 
     # P1.audit Item 4 (NARROWED): corpus_ref_long_edge is OPTIONAL on read
-    # with the established 5976 default (back-compat with the legacy CodeV
+    # with the established 5976 default (back-compat with the legacy
     # tensor schema). When PRESENT it is still validated for int + positive.
     if "corpus_ref_long_edge" in data.files:
         corpus_ref_raw = data["corpus_ref_long_edge"]
@@ -892,7 +879,7 @@ def load_tensor(path: str | Path) -> dict:
             f"load_tensor: {path} has delta_guard_applied=False; rendering "
             "through a raw tensor without the S2 delta guard will smear "
             "center-in-focus detail. Regenerate via "
-            "summicron.psf_model.codev_to_render + downscale_tensor.",
+            "scripts/build_psf (the build forces the delta guard).",
             stacklevel=2,
         )
 
@@ -951,10 +938,6 @@ def load_tensor(path: str | Path) -> dict:
         "focus_distance_m": focus_distance_m,
         "R": R,
         "D": D,
-        # S22 S1: synthetic-family tag (None for CodeV tensors).
-        "synth_family": (
-            str(data["synth_family"]) if "synth_family" in data.files else None
-        ),
     }
 
 
@@ -1169,7 +1152,7 @@ N_ANG = 8
 
 def _build_basis_kernel(
     ri, d_center_or_idx, use_idx, defocus_ratios, kernels,
-    kH, kW, psf_norm, pix_scale, scaled_ksize,
+    kH, kW, pix_scale, scaled_ksize,
 ):
     """Build the (kH, kW) raw-tensor kernel for a single radial-basis index ri.
 
@@ -1180,11 +1163,10 @@ def _build_basis_kernel(
 
     D-axis stance: D-axis remains 2-tap bilinear at the same scalar
     `d_center` as legacy. Per-pixel D-axis blend is OUT OF SCOPE for P1.10.1
-    (preserves P1.9.4 R-cubic / D-linear interp scheme; memory
-    `project_codev_axes_facts.md`). Layered path pins one `d_idx` per
+    (preserves the R-cubic / D-linear interp scheme). Layered path pins one `d_idx` per
     slab via `use_idx=True`.
 
-    Tail (pix_scale zoom + L1/peak renorm) preserves per-kernel L1/peak
+    Tail (pix_scale zoom + L1 renorm) preserves per-kernel L1
     semantics. P1.10.4 C3: slab counterpart deleted; basis is the only
     kernel-build path.
     """
@@ -1207,10 +1189,7 @@ def _build_basis_kernel(
             + d_t * kernels[int(ri), d_hi]
         ).astype(np.float32)
 
-    # --- Tail: zoom + L1/peak renorm. ---
-    if psf_norm == "peak":
-        kernel_base = kernel_base / max(float(kernel_base.max()), 1e-10)
-
+    # --- Tail: zoom + L1 renorm. ---
     # Q-b R-infocus-delta: the S2 d0 delta survives cubic ndimage_zoom as a
     # sub-pixel-offset blob (zoom grid is not centre-aligned). A STRICT delta
     # (exactly one nonzero, at (kH//2, kW//2)) maps to an
@@ -1227,8 +1206,6 @@ def _build_basis_kernel(
             and np.isfinite(kernel_base[kH // 2, kW // 2])
             and kernel_base[kH // 2, kW // 2] > 0
         ):
-            from summicron.psf_model.downscale_tensor import _make_delta
-
             return _make_delta(scaled_ksize)
 
     if pix_scale < 0.95:
@@ -1249,10 +1226,7 @@ def _build_basis_kernel(
         kernel_base = np.maximum(kernel_base, 0.0)
         ksum = kernel_base.sum()
         if ksum > 1e-10:
-            if psf_norm == "l1":
-                kernel_base /= ksum
-            else:
-                kernel_base /= max(float(kernel_base.max()), 1e-10)
+            kernel_base /= ksum
         else:
             kernel_base = np.zeros((scaled_ksize, scaled_ksize), dtype=np.float32)
             kernel_base[scaled_ksize // 2, scaled_ksize // 2] = pre_zoom_l1
@@ -1346,7 +1320,7 @@ def _fftconvolve_hoisted(
 
 def _apply_kernel(
     kernel_base, w, img_padded, img_diffuse_padded, img_bright_padded,
-    wedge_idx, pad, H, W, psf_norm,
+    wedge_idx, pad, H, W,
     output, output_bright, weight_sum, delta_weight_sum,
     *,
     fft_state: dict | None = None,
@@ -1391,10 +1365,7 @@ def _apply_kernel(
                 rot_deg = -(theta_a * 180.0 / np.pi + 90.0)
                 rotated = ndimage_rotate(kernel_base, rot_deg, reshape=False, order=1)
                 rotated = np.maximum(rotated, 0.0)
-                if psf_norm == "l1":
-                    rotated /= rotated.sum() + 1e-12
-                else:
-                    rotated /= max(float(rotated.max()), 1e-10)
+                rotated /= rotated.sum() + 1e-12
                 rotated_bright = _bright_stamp(rotated, bright_stamp_gain)
                 for c in range(3):
                     conv_d = fftconvolve(
@@ -1436,23 +1407,11 @@ def _apply_kernel(
             rot_deg = -(theta_a * 180.0 / np.pi + 90.0)
             rotated = ndimage_rotate(kernel_base, rot_deg, reshape=False, order=1)
             rotated = np.maximum(rotated, 0.0)
-            if psf_norm == "l1":
-                rotated /= rotated.sum() + 1e-12
-            else:
-                rotated /= max(float(rotated.max()), 1e-10)
+            rotated /= rotated.sum() + 1e-12
             rotated_bright = _bright_stamp(rotated, bright_stamp_gain)
-            # Pre-FFT the (potentially-different) rotated_bright kernel
-            # only when the post-rotate normalization actually diverges
-            # — which it does iff `psf_norm == "l1"` AND the L1 sum and
-            # the peak-renorm denominator disagree. For the canonical
-            # bench `psf_norm == "l1"`, so they ALWAYS diverge; we keep
-            # two separate kernel rfft2s. For the `psf_norm == "peak"`
-            # branch they are bit-equal — short-circuit one rfft2.
+            # rotated_bright differs from rotated (stamp), so two rfft2s.
             ker_diffuse_F = sp_fft.rfft2(rotated, s=fshape)
-            if psf_norm == "l1":
-                ker_bright_F = sp_fft.rfft2(rotated_bright, s=fshape)
-            else:
-                ker_bright_F = ker_diffuse_F  # rotated == rotated_bright
+            ker_bright_F = sp_fft.rfft2(rotated_bright, s=fshape)
             for c in range(3):
                 conv_d_full = sp_fft.irfft2(
                     img_diffuse_F[c] * ker_diffuse_F, s=fshape
@@ -1473,7 +1432,7 @@ def _scatter_one_slab_fixed_d_basis(
     d_idx, img_diffuse_pad, img_bright_pad, img_full_pad,
     kernels, defocus_ratios,
     radial_frac_map, r_centers, wedge_idx,
-    kH, kW, pad, pix_scale, scaled_ksize, psf_norm,
+    kH, kW, pad, pix_scale, scaled_ksize,
     H, W,
     output, output_bright, weight_sum, delta_weight_sum,
     cancel: threading.Event | None = None,
@@ -1506,11 +1465,11 @@ def _scatter_one_slab_fixed_d_basis(
             continue
         kernel_base = _build_basis_kernel(
             ri, d_idx, True, defocus_ratios, kernels,
-            kH, kW, psf_norm, pix_scale, scaled_ksize,
+            kH, kW, pix_scale, scaled_ksize,
         )
         _apply_kernel(
             kernel_base, w, img_full_pad, img_diffuse_pad, img_bright_pad,
-            wedge_idx, pad, H, W, psf_norm,
+            wedge_idx, pad, H, W,
             output, output_bright, weight_sum, delta_weight_sum,
             fft_state=fft_state, bright_stamp_gain=bright_stamp_gain,
         )
@@ -1521,7 +1480,7 @@ def _layered_gather_diffuse(
     depth_m, slab_w, img_lin,
     img_padded, img_diffuse_padded, img_bright_padded,
     kernels, defocus_ratios, radial_frac_map, r_centers, wedge_idx,
-    kH, kW, pad, pix_scale, scaled_ksize, psf_norm, H, W,
+    kH, kW, pad, pix_scale, scaled_ksize, H, W,
     fft_state, slab_batch_size, on_progress, cancel,
     emit_log=True,
     bright_stamp_gain=None,
@@ -1633,7 +1592,7 @@ def _layered_gather_diffuse(
                     radial_frac_map=radial_frac_map,
                     r_centers=r_centers, wedge_idx=wedge_idx,
                     kH=kH, kW=kW, pad=pad, pix_scale=pix_scale,
-                    scaled_ksize=scaled_ksize, psf_norm=psf_norm,
+                    scaled_ksize=scaled_ksize,
                     H=H, W=W,
                     output=out_d, output_bright=out_b_d,
                     weight_sum=wsum_d, delta_weight_sum=delta_wsum_d,
@@ -1643,11 +1602,10 @@ def _layered_gather_diffuse(
                 )
 
             # Per-slab normalize by spatial-slab weight_sum (radial partition).
-            if psf_norm == "l1":
-                wsum_d_safe = np.maximum(wsum_d, 1e-8)
-                for c in range(3):
-                    out_d[:, :, c] /= wsum_d_safe
-                    out_b_d[:, :, c] /= wsum_d_safe
+            wsum_d_safe = np.maximum(wsum_d, 1e-8)
+            for c in range(3):
+                out_d[:, :, c] /= wsum_d_safe
+                out_b_d[:, :, c] /= wsum_d_safe
 
             # Gather weight: slab_w[d] at the output.
             alpha_d = sw_d.astype(np.float32)
@@ -1719,7 +1677,6 @@ def render(
     tensor: dict,
     *,
     depth_m: np.ndarray,
-    psf_norm: str = "l1",
     hdr_source: str = "none",
     bright_thresh: float = 1e9,
     bright_pass_region_size: int = 31,
@@ -1742,13 +1699,11 @@ def render(
     ``img_lin`` ((H, W, 3) linear reference input); ``defocus_ratios`` is
     surfaced by ``_run_render_pipeline`` via its private ``_eval_sink``, not
     by this ``stats`` dict. The return arity stays 2. S22 S1 adds
-    ``knee_ratio`` (float): the identity-snap knee used (``D_KNEE_LAYERED`` for
-    CodeV tensors, the physical-diopter knee for a ``synthetic_disc_v0``
-    tensor, see ``_physical_knee_ratio``).
+    ``knee_ratio`` (float): the identity-snap knee used (always ``D_KNEE_LAYERED``).
 
     ``bright_stamp_gain`` (S22 S1): ``None`` (default) = peak stamp for the
     bright pass (today's arithmetic, bit-identical); a positive finite float =
-    L1 stamp (``kernel * gain``; requires ``psf_norm="l1"``).
+    L1 stamp (``kernel * gain``).
 
     Parameters
     ----------
@@ -1756,14 +1711,6 @@ def render(
     tensor : dict from load_tensor()
     depth_m : (H, W) float32 in meters, distance-indexed depth map (required).
         Requires tensor with object_distances_m metadata.
-    psf_norm : {"l1", "peak"}, default "l1"
-        Render-time PSF normalization mode. "l1" (default) keeps kernels L1-
-        normalized and averages via a post-convolution weight-sum divide —
-        bit-identical to the pre-P1.7 render path and energy-conserving for
-        HDR inputs. "peak" peak-normalizes kernels (peak = 1) and drops the
-        post-conv renorm, turning the PSF into a stamp: bright pixels bloom
-        by ``sum(kernel)``; overflow clips to white at finalize. See
-        doc/plan/phase1/section7/locked-spec-stamp-mode.md.
     hdr_source : {"none", "macos"}, default "none"
         Input is LDR sRGB when "none" (existing path, bit-identical to P1.7).
         Otherwise the input is already extended-linear HDR float32: skip the
@@ -1806,12 +1753,6 @@ def render(
         raise TypeError(
             f"stats must be a dict or None; got {type(stats).__name__}"
         )
-    # P1.7: validate psf_norm mode up-front.
-    if psf_norm not in ("l1", "peak"):
-        raise ValueError(
-            f"psf_norm must be 'l1' or 'peak'; got {psf_norm!r}"
-        )
-
     if bright_stamp_gain is not None:
         if (
             isinstance(bright_stamp_gain, bool)
@@ -1823,23 +1764,20 @@ def render(
                 f"bright_stamp_gain must be a positive finite number or None, "
                 f"got {bright_stamp_gain!r}"
             )
-        if psf_norm != "l1":
-            raise ValueError("bright_stamp_gain requires psf_norm='l1'")
 
     # CLI-1a A3.1b: kernel-L1 guard on the raw tensor (replaces the deleted
     # split-energy gate's only unique catch). Zero slices are exempt.
-    if psf_norm == "l1":
-        ks = np.asarray(tensor["kernels"]).sum(axis=(-2, -1))
-        bad = (~np.isfinite(ks)) | ((ks != 0) & (np.abs(ks - 1.0) > 0.05))
-        if bad.any():
-            _bv = ks[bad]
-            _fin = _bv[np.isfinite(_bv)]
-            _rep = float(_fin[np.argmax(np.abs(_fin - 1.0))]) if _fin.size else float(_bv[0])
-            _nf = "" if _fin.size == _bv.size else " (non-finite NaN/Inf kernel sum present)"
-            raise RuntimeError(
-                f"Gate FAIL: kernel energy ratio {_rep:.4f}{_nf} "
-                f"(expected L1-normalized kernels)"
-            )
+    ks = np.asarray(tensor["kernels"]).sum(axis=(-2, -1))
+    bad = (~np.isfinite(ks)) | ((ks != 0) & (np.abs(ks - 1.0) > 0.05))
+    if bad.any():
+        _bv = ks[bad]
+        _fin = _bv[np.isfinite(_bv)]
+        _rep = float(_fin[np.argmax(np.abs(_fin - 1.0))]) if _fin.size else float(_bv[0])
+        _nf = "" if _fin.size == _bv.size else " (non-finite NaN/Inf kernel sum present)"
+        raise RuntimeError(
+            f"Gate FAIL: kernel energy ratio {_rep:.4f}{_nf} "
+            f"(expected L1-normalized kernels)"
+        )
 
     # P1.11 R1: negative bright_thresh is coerced to 0 (bright path then covers
     # the full image). Rejecting non-finite outright — NaN/Inf makes no sense.
@@ -1864,18 +1802,6 @@ def render(
             f"occlusion_compositing must be 'off' or 'on', "
             f"got {occlusion_compositing!r}"
         )
-
-    # R-occ-on-fixes F4: peak-normalised kernels give matte alpha > 1, which
-    # the layered OVER compositor cannot handle -> fall back to the OFF path.
-    if occlusion_compositing == "on" and psf_norm == "peak":
-        _msg = (
-            "--psf-norm peak is incompatible with --occlusion-compositing on "
-            "(peak-normalised matte alpha > 1); falling back to off."
-        )
-        warnings.warn(_msg, RuntimeWarning, stacklevel=2)
-        if on_progress is not None:  # CLI (None) gets the warning only
-            on_progress("  " + _msg)
-        occlusion_compositing = "off"
 
     # P1.10: validate region-aware bright-pass kwargs.
     if (
@@ -2091,13 +2017,7 @@ def render(
     # the old pre-dispatch zeros were dead (both branches rebind all four from
     # the helper's tuple). weight_sum / delta_weight_sum track the is_delta
     # branch weight so the diffuse energy gate has the right denominator.
-    # S22 S1: the synthetic family has D=16 uniform-diopter slabs and a normal
-    # scene legitimately touches most of them; the "pathological depth spread"
-    # warning (cap max(8, D//2), tuned for the 11-node geometric axis) would
-    # fire on every render. For that family the cap is D itself (never warns).
-    active_slab_cap = (
-        int(tensor["D"]) if tensor.get("synth_family") == _SYNTH_FAMILY_NAME else None
-    )
+    active_slab_cap = None
     if occlusion_compositing == "on":
         # R-occlusion-layering ON branch — single dispatch to the parallel
         # _layered_composite() helper. The OFF path (the slab loop below) stays
@@ -2129,7 +2049,7 @@ def render(
             r_centers=r_centers,
             wedge_idx=wedge_idx,
             kH=kH, kW=kW, pad=pad, pix_scale=pix_scale,
-            scaled_ksize=scaled_ksize, psf_norm=psf_norm,
+            scaled_ksize=scaled_ksize,
             H=H, W=W,
             fft_state=fft_state,
             slab_batch_size=slab_batch_size,
@@ -2164,7 +2084,7 @@ def render(
             radial_frac_map=radial_frac_map, r_centers=r_centers,
             wedge_idx=wedge_idx,
             kH=kH, kW=kW, pad=pad, pix_scale=pix_scale,
-            scaled_ksize=scaled_ksize, psf_norm=psf_norm, H=H, W=W,
+            scaled_ksize=scaled_ksize, H=H, W=W,
             fft_state=fft_state, slab_batch_size=slab_batch_size,
             on_progress=on_progress, cancel=cancel,
             emit_log=True, bright_stamp_gain=bright_stamp_gain,
@@ -2207,19 +2127,12 @@ def render(
         # Σ energy under the composite.
         lin_sum = float(img_lin.sum())
         energy_ratio = float(output.sum()) / max(lin_sum, 1e-6)
-        if psf_norm == "l1":
-            if not (0.85 <= energy_ratio <= 100.0):
-                raise RuntimeError(
-                    f"Gate FAIL (layered): total energy ratio "
-                    f"{energy_ratio:.4f} outside [0.85, 100.0] "
-                    f"(linear/linear)"
-                )
-        else:
-            if not (energy_ratio <= 500.0):
-                raise RuntimeError(
-                    f"Gate FAIL: stamp bloom runaway, energy ratio "
-                    f"{energy_ratio:.4f} > 500.0"
-                )
+        if not (0.85 <= energy_ratio <= 100.0):
+            raise RuntimeError(
+                f"Gate FAIL (layered): total energy ratio "
+                f"{energy_ratio:.4f} outside [0.85, 100.0] "
+                f"(linear/linear)"
+            )
 
     # Center SSIM check (warning only)
     if min(H, W) < 7:
@@ -2240,35 +2153,12 @@ def render(
         except ImportError:
             warnings.warn("skimage not available; skipping center SSIM check")
 
-    # P1.7 fix-round: auto-exposure normalize in peak (stamp) mode only.
-    # Bright regions in stamp mode legitimately bloom past 1.0 on LDR input
-    # (kernel-sum may be ~150 on wide blur). Naive clip crushes mid-tones to
-    # white. Divide the whole linear image by its own max so the brightest
-    # output pixel lands at 1.0 and mid-tones are preserved proportionally.
-    # Gated on ``omax > 1.0`` so dim / in-focus scenes (max already < 1) are
-    # untouched — preserves test_in_focus_peak_preservation semantics.
-    # L1 mode is intentionally untouched (bit-identity guard).
-    if psf_norm == "peak":
-        omax = float(output.max())
-        if omax > 1.0:
-            output = output / omax
-
     # P1.12 R2 / TL REVISION 1: α-blend as post-layered IDENTITY SNAP.
     # Load-bearing for in-focus sharpness (G12 G_FACE_FALLOFF): at dmap≈0
     # the smoothstep POU spreads weight across ~4 non-identity bins; this
     # snap restores sharpness at the focal plane while preserving the
     # layered composite elsewhere. `output` here = diffuse + bright.
-    # S22 S1: the knee is keyed on the tensor's own metadata. CodeV tensors
-    # (no ``synth_family`` key) use the D_KNEE_LAYERED object itself, so the
-    # codev arithmetic is unchanged; the synthetic family converts the same
-    # 0.407 D protection to its own (uniform-diopter) axis.
-    if tensor.get("synth_family") == _SYNTH_FAMILY_NAME:
-        knee = _physical_knee_ratio(
-            tensor["object_distances_m"], tensor["defocus_ratios"],
-            tensor.get("focus_distance_m") or 0.7,
-        )
-    else:
-        knee = D_KNEE_LAYERED
+    knee = D_KNEE_LAYERED
     alpha = (np.cos(0.5 * np.pi * np.minimum(dmap / knee, 1.0)) ** 2).astype(np.float32)
     output = alpha[:, :, None] * img_lin + (1.0 - alpha[:, :, None]) * output
     if np.any(np.isnan(output)):
@@ -2281,14 +2171,7 @@ def render(
         stats["alpha"] = alpha
         stats["dmap"] = dmap
         stats["img_lin"] = img_lin
-    if knee is D_KNEE_LAYERED:
-        _emit(on_progress, f"  α-blend: D_KNEE_LAYERED={D_KNEE_LAYERED}, alpha_mean={float(alpha.mean()):.3f} (layered identity snap)")
-    else:
-        _emit(
-            on_progress,
-            f"  α-blend: knee={knee:.4f} ({KNEE_DIOPTER:.3f} D physical), "
-            f"alpha_mean={float(alpha.mean()):.3f} (layered identity snap)",
-        )
+    _emit(on_progress, f"  α-blend: D_KNEE_LAYERED={D_KNEE_LAYERED}, alpha_mean={float(alpha.mean()):.3f} (layered identity snap)")
 
     output_linear = output.copy()
 
@@ -2365,6 +2248,25 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
     """
     from summicron.render.api import RenderOptions, _check_platform
 
+    for _dest, _flag in (
+        ("_removed_kernel_family", "--kernel-family"),
+        ("_removed_lens_aperture_mm", "--lens-aperture-mm"),
+        ("_removed_psf_norm", "--psf-norm"),
+    ):
+        if hasattr(args, _dest):
+            _why = (
+                "PSFs are always L1-normalised"
+                if _flag == "--psf-norm"
+                else "the only PSF source is the ray-traced lens tensor "
+                "(use --lens 35|50 or --tensor PATH)"
+            )
+            parser.exit(
+                2,
+                f"render: {_flag} was removed in 0.5.0; {_why}. "
+                "See 'Migrating to 0.5.0' in CHANGELOG.md.\n",
+            )
+    if getattr(args, "lens", None) is not None and getattr(args, "tensor", None) is not None:
+        parser.exit(2, "render: --lens and --tensor are mutually exclusive\n")
     try:
         _check_platform(getattr(args, "hdr_source", "none"))
         RenderOptions.from_argparse(args)
@@ -2420,14 +2322,18 @@ def _run_render_pipeline(
     from summicron.render.api import RenderDiagnostics, RenderResult
 
     image_path = Path(opts.image_path)
-    from summicron.render._resolve import resolve_family
-    fam = resolve_family(opts)
-    synthetic = fam.kernel_family == "synthetic"
+    from summicron.render._resolve import DEFAULT_BRIGHT_STAMP_GAIN, resolve_stamp
+    fam = resolve_stamp(opts)
     tensor_path = Path(opts.tensor_path) if opts.tensor_path is not None else None
-    if tensor_path is None and not synthetic:
-        # P1.audit Item 7: fall back to the wheel-shipped canonical tensor.
+    if tensor_path is None:
+        # Wheel-shipped tensor for the selected lens (default 35).
         from summicron.render._artifacts import default_tensor_path
-        tensor_path = default_tensor_path()
+        tensor_path = default_tensor_path(opts.lens or "35")
+    elif not tensor_path.is_file():
+        raise FileNotFoundError(
+            f"tensor not found: {tensor_path} (bundled tensors changed in "
+            "0.5.0; see 'Migrating to 0.5.0' in CHANGELOG.md)"
+        )
     out_dir = Path(opts.out_dir) if opts.out_dir is not None else (
         Path.cwd() / "runs" / "render"
     )
@@ -2529,15 +2435,9 @@ def _run_render_pipeline(
             warnings_collected.append(msg)
         return focus_target_m
 
-    if synthetic:
-        # S22 S1: the family is built/loaded AFTER resolve_auto (below); nothing
-        # before apply_tap_focus_shift reads the tensor.
-        tensor = None
-        focus_target_m = None
-    else:
-        _emit(on_progress, f"Loading tensor: {tensor_path}")
-        tensor = load_tensor(tensor_path)
-        focus_target_m = _resolve_focus_target(tensor)
+    _emit(on_progress, f"Loading tensor: {tensor_path}")
+    tensor = load_tensor(tensor_path)
+    focus_target_m = _resolve_focus_target(tensor)
 
     from summicron.depth.estimate import (
         extract_lidar_depth,
@@ -2589,17 +2489,6 @@ def _run_render_pipeline(
         warnings_collected.append(_w)
     if modes.any_auto:
         _emit(on_progress, modes.resolved_line())
-    if synthetic:
-        from summicron.render import _family
-        tensor, _fam_path, _fam_hit = _family.load_family_tensor(
-            fam.lens_aperture_mm, on_progress=on_progress
-        )
-        _emit(
-            on_progress,
-            f"Loading synthetic family: A={fam.lens_aperture_mm:g} mm "
-            f"({'cache hit' if _fam_hit else 'built'}): {_fam_path}",
-        )
-        focus_target_m = _resolve_focus_target(tensor)
     if depth_m is None:  # resolved monocular
         _emit(on_progress, f"Running Depth Anything V2 (target={H}x{W})...")
         depth_m = _monocular_depth(
@@ -2622,7 +2511,7 @@ def _run_render_pipeline(
         )
         depth_m_arr = shifted_m
     else:  # diopter: consumes UNSCALED metres (S1 spec 3.1/3.2)
-        from summicron.depth.diopter import auto_gain, diopter_equivalent_depth
+        from summicron.depth.diopter import diopter_equivalent_depth
 
         if depth_scale != 1.0:
             _msg = (
@@ -2641,13 +2530,10 @@ def _run_render_pipeline(
                 f"end {float(od[-1]):g} m under --depth-mapping diopter"
             )
         _gain_note = ""
-        if opts.depth_gain == "auto" and synthetic:
-            # S22 S1: CoC = 1.365*A*g*dp, so g and A are degenerate; the family
-            # is linear in dp and never saturates -> physical gain 1.0.
+        if opts.depth_gain == "auto":
+            # Ray-traced tensors are physically sized: gain 1.0.
             g = 1.0
-            _gain_note = " (synthetic: physical)"
-        elif opts.depth_gain == "auto":
-            g = auto_gain(depth_m, anchor_m, z_focus=focus_target_m, od=od, lo=1.0)
+            _gain_note = " (physical)"
         else:
             g = float(opts.depth_gain)
         depth_m_arr = diopter_equivalent_depth(
@@ -2693,12 +2579,12 @@ def _run_render_pipeline(
             1.0 if opts.bright_pass_thresh in (None, "auto")
             else float(opts.bright_pass_thresh)
         )
-    if synthetic:
-        name_suffix += f"_synA{fam.lens_aperture_mm:g}"
-    if fam.bright_stamp_gain is not None and (synthetic or opts.bright_stamp == "l1"):
-        name_suffix += f"_l1g{fam.bright_stamp_gain:g}"
-    elif synthetic and fam.bright_stamp == "peak":
+    if opts.tensor_path is None and opts.lens == "50":
+        name_suffix += "_lens50"
+    if fam.bright_stamp == "peak":
         name_suffix += "_peak"
+    elif fam.bright_stamp_gain != DEFAULT_BRIGHT_STAMP_GAIN:
+        name_suffix += f"_l1g{fam.bright_stamp_gain:g}"
     if _eval_sink is not None:
         _eval_sink["bright_thresh"] = bright_thr
 
@@ -2706,7 +2592,7 @@ def _run_render_pipeline(
         on_progress,
         f"Rendering (depth_scale="
         f"{depth_scale if modes.depth_mapping == 'linear' else '1.0 (ignored, diopter)'}"
-        f", psf_norm={opts.psf_norm}, "
+        f", "
         f"hdr_source={hdr_src})...",
     )
     render_stats: dict = {}
@@ -2714,7 +2600,6 @@ def _run_render_pipeline(
         image_srgb,
         tensor,
         depth_m=depth_m_arr,
-        psf_norm=opts.psf_norm,
         hdr_source=hdr_src,
         bright_thresh=bright_thr,
         bright_pass_region_size=opts.bright_pass_region_size,
@@ -2857,12 +2742,10 @@ def _run_render_pipeline(
             "depth_mapping": modes.depth_mapping,
             "tonemap": modes.tonemap,
             "bright_pass_thresh": f"{bright_thr:g}",
-            "kernel_family": fam.kernel_family,
-            "bright_stamp": fam.bright_stamp,
-            **(
-                {"lens_aperture_mm": f"{fam.lens_aperture_mm:g}"}
-                if fam.lens_aperture_mm is not None else {}
+            "lens": (
+                "custom" if opts.tensor_path is not None else (opts.lens or "35")
             ),
+            "bright_stamp": fam.bright_stamp,
             **(
                 {"bright_stamp_gain": f"{fam.bright_stamp_gain:g}"}
                 if fam.bright_stamp_gain is not None else {}

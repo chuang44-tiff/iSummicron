@@ -168,13 +168,6 @@ class TestKernelL1Guard:
         with pytest.raises(RuntimeError, match="NaN"):
             cv.render(_img(), t, depth_m=_depth())
 
-    def test_peak_mode_skips_guard_intended(self):
-        """psf_norm='peak' renormalizes per-kernel → sums are irrelevant;
-        guard intentionally l1-only."""
-        t = _tensor()
-        t["kernels"][3, 4] *= 3.0
-        cv.render(_img(), t, depth_m=_depth(), psf_norm="peak")
-
     def test_guard_does_not_mutate_tensor(self):
         t = _tensor()
         before = t["kernels"].copy()
@@ -308,7 +301,6 @@ def _cli_render_parser():
 
 
 _CHOICES = {
-    "--psf-norm": ["l1", "peak"],
     "--depth-source": ["lidar", "monocular"],
     "--hdr-source": ["none", "macos"],
     "--shadow-match-mode": ["off", "on"],
@@ -372,9 +364,9 @@ class TestArgparseParity:
             main(["render", "--image", "x", "--dof-m", "2.0"])
 
     def test_partial_namespace_keeps_defaults(self):
-        opts = RenderOptions.from_argparse(argparse.Namespace(psf_norm="peak"))
+        opts = RenderOptions.from_argparse(argparse.Namespace(depth_source="monocular"))
         default = RenderOptions(image_path=opts.image_path)
-        assert opts.psf_norm == "peak"
+        assert opts.depth_source == "monocular"
         for f in ("occlusion_compositing", "bright_pass_region_size",
                   "hdr_source", "focus_xy", "out_path", "tensor_path"):
             assert getattr(opts, f) == getattr(default, f), f

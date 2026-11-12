@@ -41,9 +41,42 @@ URL_ALLOW_DOCS = (
     "www.apache.org", "huggingface.co/depth-anything", "arxiv.org", "doi.org",
     "keepachangelog.com", "semver.org",
 )
+FIGURES = [
+    "fig_corner_35_plain_disc.jpg",
+    "fig_corner_35_real_lens.jpg",
+    "fig_corner_50_plain_disc.jpg",
+    "fig_corner_50_real_lens.jpg",
+    "fig_diopter_layers_dark.png",
+    "fig_diopter_layers.png",
+    "fig_front_vs_back_dark.png",
+    "fig_front_vs_back.png",
+    "fig_hdr_kitchen_hair_none_vs_auto.jpg",
+    "fig_hdr_kitchen_lamps_none_vs_auto.jpg",
+    "fig_journey_35_s1_onaxis_0p7m_focus.png",
+    "fig_journey_35_s2_onaxis_20m.png",
+    "fig_journey_35_s3_20m_corner.png",
+    "fig_journey_35_s3_20m_midring.png",
+    "fig_journey_35_s4_around_frame.png",
+    "fig_journey_35.gif",
+    "fig_kernels_atlas_35.png",
+    "fig_kernels_atlas_50.png",
+    "fig_layer_weights_dark.png",
+    "fig_layer_weights.png",
+    "fig_psf_grid_35.png",
+    "fig_psf_grid_50.png",
+    "fig_wedges_8_dark.png",
+    "fig_wedges_8.png",
+    "fig_kitchen_4up.jpg",
+    "fig_xmas_35_plain_disc.jpg",
+    "fig_xmas_35_real_lens.jpg",
+    "fig_xmas_50_plain_disc.jpg",
+    "fig_xmas_50_real_lens.jpg",
+    "fig_xmas_zoom_input_35_50.jpg",
+    "fig_xmas_zoom_input_disc_35.jpg",
+]
 ASSETS = [f"isummicron-{VER}-py3-none-any.whl", f"isummicron-{VER}.tar.gz", "Demo_input.HEIC",
           "Demo_portraitmode.HEIC", "SHA256SUMS", "Demo_input_before.jpg", "Demo_input_after.jpg",
-          "Demo_input_before_edge.jpg", "Demo_input_after_edge.jpg"]
+          "Demo_input_before_edge.jpg", "Demo_input_after_edge.jpg", *FIGURES, "isummicron_pipeline.html"]
 REMOVED_FLAGS = {"--dof-m", "--kernel-centring", "--radial-blend-mode", "--layered-gather",
                  "--r-blend-strength", "--bright-pass-knee", "--dual-tensor", "--working-long-edge"}
 EXTRA_FLAGS = {"--help", "--ignore-missing", "--no-show", "--image", "--tensor", "--depth-source"}
@@ -320,12 +353,20 @@ def test_t6_trademark_and_lens_facts():
     assert TRADEMARK in _read(README)
     assert TRADEMARK in _read(DOCROOT / "docs" / "faq.md")
     rd = _read(README)
-    assert "~100 mm f/2" in rd and "not a measured" in rd.replace("*", "").lower()
+    # 0.5.0: two ray-traced lenses, credited to the expired patent and optiland; no measured-lens claim
+    assert "ray-traced from the expired US patent 3,006,249, Example II, using optiland" in rd
+    assert "US 3,006,249, Example II" in rd and "optiland" in rd and "MIT" in rd
+    assert "not measurements of any Leica lens" in rd
+    assert "--lens 50" in rd and "--lens 35" in rd
+    for banned in ("ag_" + "dblgauss", "~100 mm", "Man" + "dler", "Lei" + "tz"):  # built from pieces: the legacy-token scan reads this file
+        assert banned not in rd, banned
 
 
 def test_t6_no_stale_claims():
-    stale = ["Summicron-M 35", "no implementation yet", "Depth Anything 3", "MediaPipe", "radially outward",
-             "47×47", "50 mm"]
+    # "radially outward" is no longer stale: 0.5.0 verifies the orientation end to end (tests/unit/test_raytrace_orientation.py,
+    # tests/adversarial/test_rotation_adversarial.py), so the s24 README may state it.
+    stale = ["Summicron-M 35", "no implementation yet", "Depth Anything 3", "MediaPipe",
+             "47×47", "~100 mm", "ag_" + "dblgauss", "--psf-norm l1", "--psf-norm peak"]
     files = NON_CHANGELOG + sorted((ROOT / "summicron").rglob("README.md"))
     for p in files:
         text = _read(p)
@@ -337,11 +378,11 @@ def test_t6_output_name_matches_save_results(tmp_path, capsys):
     import numpy as np
     from summicron.render.convolve import save_results
 
-    # the quick start (default look) records its options in the name: guided depth, diopter gain, input-lut tone
+    # the quick start (default look) records its options in the name: guided depth, diopter gain 1.00 (the fixed 0.5.0 auto gain), input-lut tone
     p = save_results(np.zeros((4, 4, 3), np.uint8), "Demo_input", tmp_path, downres=2048,
-                     name_suffix="_gd_dio1.12_tlut")
+                     name_suffix="_gd_dio1.00_tlut")
     capsys.readouterr()
-    assert p.name == "Demo_input_r2048_rendered_gd_dio1.12_tlut.jpg"
+    assert p.name == "Demo_input_r2048_rendered_gd_dio1.00_tlut.jpg"
     assert p.name in _read(DOCROOT / "docs" / "usage.md")
 
 
@@ -380,6 +421,11 @@ def test_t7_changelog_links():
     for v in versions:
         assert v in refs, v
         if tuple(int(x) for x in v.split(".")) >= (0, 3, 0):
-            assert refs[v] == f"{BASE}/releases/tag/v{v}", (v, refs[v])
+            # a release link is the tag URL; from 0.5.0 on it may instead compare with the previous release
+            prev = versions[versions.index(v) + 1] if versions.index(v) + 1 < len(versions) else None
+            ok = [f"{BASE}/releases/tag/v{v}"]
+            if v == "0.5.0":
+                ok = [f"{BASE}/compare/v{prev}...v{v}"]  # 0.5.0 carries the compare link (the first diff-sized release)
+            assert refs[v] in ok, (v, refs[v])
     body = re.search(rf"(?ms)^## \[{re.escape(versions[0])}\][^\n]*\n(.*?)(?=^## \[|^\[[^\]]+\]:)", text)
     assert body and body.group(1).strip()

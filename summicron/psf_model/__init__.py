@@ -1,1 +1,1 @@
-"""CodeV PSF -> render tensor build tooling (codev_to_render, downscale_tensor)."""
+"""Ray-trace tensor assembly (ray_kernel): optiland PSFs -> render tensor."""

@@ -65,7 +65,7 @@ def cmd_dump(a) -> int:
         rel, fxy = SCENES[scene]
         over = dict(save=True, return_linear=True,
                     out_path=outdir / f"{scene}.jpg")
-        opts = RenderOptions.canonical_bench(ROOT / rel, fxy, old_look=True, **over)
+        opts = RenderOptions.canonical_bench(ROOT / rel, fxy, **over)
         if a.downres is not None:
             from dataclasses import replace
             opts = replace(opts, downres=a.downres)
@@ -117,7 +117,7 @@ def _knee_ger(base, var, ref, alpha, dmap, win):
 
 
 def _slab0_threshold(b) -> float:
-    """``defocus_ratios[2]`` from the dump (fallback: shipped tensor)."""
+    """``defocus_ratios[2]`` from the dump (fallback: the default shipped tensor)."""
     if "defocus_ratios" in b.files:
         return float(b["defocus_ratios"][2])
     from summicron.render._artifacts import default_tensor_path

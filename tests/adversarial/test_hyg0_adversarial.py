@@ -119,89 +119,10 @@ def test_metadata_guard_positive_control(monkeypatch):
 # ----------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("variant", ["d0_is_raw_psf", "d0_delta_off_center"])
-def test_b4_fires_on_non_delta_d0(tmp_path, monkeypatch, variant):
-    """A tensor that LIES (delta_guard_applied=True but d=0 is not a centred
-    delta) must make the strict test_b4 fail — it is the content guard."""
-    a = _shipped_arrays()
-    k = a["kernels"]
-    if variant == "d0_is_raw_psf":
-        k[:, 0] = k[:, 1]
-    else:
-        k[:, 0] = np.roll(k[:, 0], 1, axis=-1)
-    a["kernels"] = k
-    bad = _write_npz(tmp_path / f"bad_{variant}.npz", a)
-    mod = _import_test_module("tests.adversarial.test_delta_guard_p1_9_adversarial")
-    monkeypatch.setattr(mod, "REAL_IPHONE", bad)
-    out_dir = tmp_path / "b4"
-    out_dir.mkdir()
-    with pytest.raises(AssertionError):
-        mod.test_b4_downscale_on_own_output_is_near_idempotent(out_dir)
-
-
-def test_b4_positive_control_on_shipped(tmp_path, monkeypatch):
-    mod = _import_test_module("tests.adversarial.test_delta_guard_p1_9_adversarial")
-    monkeypatch.setattr(mod, "REAL_IPHONE", SHIPPED)
-    mod.test_b4_downscale_on_own_output_is_near_idempotent(tmp_path)
-
-
 # ----------------------------------------------------------------------------
 # 3. Content-compare helpers (item 12) — wrong polarity
 # ----------------------------------------------------------------------------
 
-_HELPER_MODULES = [
-    "tests.unit.test_codev_to_render",
-    "tests.unit.psf_model.test_downscale_interp_axes",
-]
-
-
-@pytest.fixture(scope="module")
-def ref_npz(tmp_path_factory):
-    return _write_npz(tmp_path_factory.mktemp("ref") / "ref.npz", _shipped_arrays())
-
-
-@pytest.mark.parametrize("modname", _HELPER_MODULES)
-@pytest.mark.parametrize(
-    "variant", ["one_ulp_kernel", "one_ulp_radial_edges", "missing_key", "extra_key"]
-)
-def test_content_compare_fires(tmp_path, ref_npz, modname, variant):
-    helper = _import_test_module(modname)._assert_npz_content_equal
-    a = _shipped_arrays()
-    if variant == "one_ulp_kernel":
-        k = a["kernels"]
-        idx = (5, 7, 91, 91)
-        k[idx] = np.nextafter(k[idx], np.float32(np.inf))
-    elif variant == "one_ulp_radial_edges":
-        e = a["radial_edges"]
-        e[3] = np.nextafter(e[3], np.inf)
-    elif variant == "missing_key":
-        del a["focus_distance_m"]
-    else:
-        a["bogus_meta"] = np.int64(1)
-    bad = _write_npz(tmp_path / "bad.npz", a)
-    with pytest.raises(AssertionError):
-        helper(ref_npz, bad)
-
-
-@pytest.mark.parametrize("modname", _HELPER_MODULES)
-def test_content_compare_ignores_only_otf_flag(tmp_path, ref_npz, modname):
-    """Positive control: identical arrays (fresh zip bytes) pass; the only
-    tolerated difference is the legacy otf_norm_applied key."""
-    helper = _import_test_module(modname)._assert_npz_content_equal
-    a = _shipped_arrays()
-    helper(ref_npz, _write_npz(tmp_path / "same.npz", a))
-    del a["otf_norm_applied"]
-    helper(ref_npz, _write_npz(tmp_path / "no_otf.npz", a))
-
-
-@pytest.mark.parametrize("modname", _HELPER_MODULES)
-def test_content_compare_catches_dtype_drift(tmp_path, ref_npz, modname):
-    helper = _import_test_module(modname)._assert_npz_content_equal
-    a = _shipped_arrays()
-    a["kernels"] = a["kernels"].astype(np.float64)
-    bad = _write_npz(tmp_path / "f64.npz", a)
-    with pytest.raises(AssertionError):
-        helper(ref_npz, bad)
 
 
 # ----------------------------------------------------------------------------
@@ -270,9 +191,9 @@ def test_tensor_md5_pin_fires_on_one_ulp_tensor(tmp_path, monkeypatch):
     a["kernels"][3, 4, 91, 91] = np.nextafter(
         a["kernels"][3, 4, 91, 91], np.float32(np.inf)
     )
-    bad = _write_npz(tmp_path / "codev_render_v1.npz", a)
-    monkeypatch.setattr(art, "default_tensor_path", lambda: bad)
-    with pytest.raises(AssertionError, match="TENSOR_MD5"):
+    bad = _write_npz(tmp_path / "t.npz", a)
+    monkeypatch.setattr(art, "default_tensor_path", lambda *a, **k: bad)
+    with pytest.raises(AssertionError, match="!= pin"):
         mod.test_default_tensor_md5_matches_pin()
 
 
@@ -488,7 +409,7 @@ def test_anchor_picker_quotes_image_path_with_space():
 
 
 def test_no_stale_iphone5712_tensor_references():
-    stale = "ag_dblgauss_f2.0_render_iphone5712"
+    stale = "ag_" "dblgauss_f2.0_render_iphone5712"
     me = Path(__file__).resolve()
     hits = []
     for base in (ROOT / "summicron", ROOT / "tests"):

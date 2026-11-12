@@ -30,8 +30,7 @@ def test_quality_exception_does_not_fail_render(tmp_path, monkeypatch):
     opts = RenderOptions(
         image_path=IMG, tensor_path=default_tensor_path(),
         out_path=tmp_path / "o.jpg", depth_source="lidar",
-        focus_xy=(0.40, 0.45), depth_scale=10.0, downres=256,
-        psf_norm="l1", hdr_source="none",
+        focus_xy=(0.40, 0.45), depth_scale=10.0, downres=256, hdr_source="none",
     )
     with pytest.warns(RuntimeWarning, match="Q1 focus-fidelity"):
         res = render_image(opts)

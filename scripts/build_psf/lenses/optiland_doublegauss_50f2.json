@@ -1,0 +1,93 @@
+{
+ "name": "optiland sample DoubleGauss, scaled to EFL 50 / f/2",
+ "citation": "50 mm f/2 double-Gauss, ray-traced with optiland from the optiland sample objective DoubleGauss (MIT licence)",
+ "gs_reference": "scan",
+ "prescription_variant": "optiland-sample",
+ "efl_mm": 50.0,
+ "epd_mm": 25.0,
+ "units": "optiland sample units, f = 100.004, F:2.0 (EPD 20.0), 6 elements; image gap = sample BFD (refocused by the builder)",
+ "modified_from_patent": false,
+ "note": "Design field of the sample is about +-14 deg at 100 mm (field 14 deg, stated); full-frame 50 mm (+-23.4 deg) is BEYOND the design field, so off-axis aberration/vignetting is large by construction. No optimisation. Glasses are the sample catalog glasses (N-SSK2, N-SK2, F5, N-SK16) converted to nd/vd Abbe models (the pipeline uses AbbeMaterial); radii/thicknesses verbatim. Planar surfaces use the string 'inf'. The sample's stop is the planar surface between R5 and R6.",
+ "build_env": "ISUMMICRON_BUILD_PSF_EFL_MM=50 ISUMMICRON_BUILD_PSF_EPD_MM=25 ISUMMICRON_BUILD_PSF_HALF_FIELD_DEG=23.3962047 (=atan(21.633/50)); --patent-lens must point at this same file",
+ "half_field_deg": 23.3962047,
+ "surfaces": [
+  {
+   "id": "R1",
+   "radius": 56.20238,
+   "thickness": 8.75,
+   "nd": 1.622294,
+   "vd": 53.274
+  },
+  {
+   "id": "R2",
+   "radius": 152.2858,
+   "thickness": 0.5,
+   "nd": null,
+   "vd": null
+  },
+  {
+   "id": "R3",
+   "radius": 37.68262,
+   "thickness": 12.5,
+   "nd": 1.607381,
+   "vd": 56.65
+  },
+  {
+   "id": "R4",
+   "radius": "inf",
+   "thickness": 3.8,
+   "nd": 1.60342,
+   "vd": 38.03
+  },
+  {
+   "id": "R5",
+   "radius": 24.2313,
+   "thickness": 16.369445,
+   "nd": null,
+   "vd": null
+  },
+  {
+   "id": "STOP",
+   "radius": null,
+   "thickness": 13.747957,
+   "nd": null,
+   "vd": null,
+   "stop": true
+  },
+  {
+   "id": "R6",
+   "radius": -28.37731,
+   "thickness": 3.8,
+   "nd": 1.60342,
+   "vd": 38.03
+  },
+  {
+   "id": "R7",
+   "radius": "inf",
+   "thickness": 11.0,
+   "nd": 1.62041,
+   "vd": 60.324
+  },
+  {
+   "id": "R8",
+   "radius": -37.92546,
+   "thickness": 0.5,
+   "nd": null,
+   "vd": null
+  },
+  {
+   "id": "R9",
+   "radius": 177.41176,
+   "thickness": 7.0,
+   "nd": 1.62041,
+   "vd": 60.324
+  },
+  {
+   "id": "R10",
+   "radius": -79.41143,
+   "thickness": 61.487536,
+   "nd": null,
+   "vd": null
+  }
+ ]
+}

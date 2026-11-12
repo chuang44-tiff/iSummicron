@@ -76,9 +76,6 @@ def test_canonical_bench_defaults_unchanged():
     o = RenderOptions.canonical_bench("a.jpg", (0.4, 0.4))
     assert (o.depth_guided, o.depth_mapping, o.depth_gain) == ("auto", "auto", "auto")
     assert o.depth_scale == 1.0  # Run 6: CANONICAL_FLAGS drops --depth-scale 10
-    o = RenderOptions.canonical_bench("a.jpg", (0.4, 0.4), old_look=True)
-    assert (o.depth_guided, o.depth_mapping, o.depth_gain) == ("off", "linear", "auto")
-    assert o.depth_scale == 10.0
 
 
 def test_render_args_stays_numpy_free():
@@ -202,14 +199,14 @@ def test_linear_branch_unscaled_untouched(tmp_path):
 
 
 def test_diopter_matches_leaf_functions(tmp_path):
-    from summicron.depth.diopter import auto_gain, diopter_equivalent_depth
+    from summicron.depth.diopter import diopter_equivalent_depth
     from summicron.depth.estimate import apply_tap_focus_shift
 
     cap = _run(tmp_path, depth_mapping="diopter")
     d = cap["depth"]
     od = np.linspace(0.7, 5.0, 4).astype(np.float64)
     _, anchor = apply_tap_focus_shift(d, (0.5, 0.5), 0.7)
-    g = auto_gain(d, anchor, z_focus=0.7, od=od, lo=1.0)
+    g = 1.0  # 0.5.0: `--depth-gain auto` under diopter is the fixed physical gain 1.0
     want = diopter_equivalent_depth(d, anchor, gain=g, z_focus=0.7, z_far=float(od[-1]))
     np.testing.assert_array_equal(cap["render"]["depth_m"], want)
     assert cap["saved"]["name_suffix"] == f"_dio{g:.2f}"

@@ -1,8 +1,8 @@
 """Adversarial probes for the follow-ups sweep (section19_followups).
 
 Entrypoint parity (``convolve.main`` vs ``isummicron render``), the shared
-``run_cli_render`` contract, the 48 MP numeric suggestion, and the
-``--psf-norm peak`` + ON fallback messaging. Small synthetic inputs only.
+``run_cli_render`` contract, the 48 MP numeric suggestion.
+Small synthetic inputs only.
 """
 from __future__ import annotations
 
@@ -118,22 +118,19 @@ def test_parity_corrupt_tensor_not_a_zip(capsys, png, tmp_path, fake_lidar):
     assert e1 == e2
 
 
-def test_parity_success_and_peak_on(monkeypatch, capsys, png, tmp_path,
+def test_parity_success_occ_on(monkeypatch, capsys, png, tmp_path,
                                     fake_lidar):
     outs = []
     for entry in ("convolve", "cli"):
         od = tmp_path / entry
-        argv = ["--image", str(png), "--out-dir", str(od), "--psf-norm",
-                "peak", "--occlusion-compositing", "on"]
+        argv = ["--image", str(png), "--out-dir", str(od),
+                "--occlusion-compositing", "on"]
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             rc = cv.main(argv) if entry == "convolve" else cli.main(
                 ["render", *argv])
         cap = capsys.readouterr()
-        peak = [x for x in w if "psf-norm peak" in str(x.message)]
         assert rc == 0
-        assert len(peak) == 1, entry
-        assert "falling back" not in cap.out
         files = sorted(p.name for p in od.iterdir())
         assert files, entry
         outs.append((cap.out.replace(str(od), "<OD>"), files,
@@ -247,22 +244,6 @@ def test_pixel_suggestion_vs_memory_budget(h, w):
     sc = n / max(h, w)
     nh, nw = int(round(h * sc)), int(round(w * sc))
     cv._memory_guard(nh, nw, 11)  # must not raise (includes pixel guard)
-
-
-# ---------------------------------------------------------------------------
-# (4) peak fallback on render_image: progress line once, warning once
-# ---------------------------------------------------------------------------
-
-def test_render_image_peak_fallback_progress_and_warning_once(png, tmp_path,
-                                                              fake_lidar):
-    opts = RenderOptions(image_path=png, out_dir=tmp_path / "ri",
-                         psf_norm="peak", occlusion_compositing="on")
-    msgs = []
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        render_image(opts, on_progress=msgs.append)
-    assert sum("falling back" in m for m in msgs) == 1
-    assert sum("psf-norm peak" in str(x.message) for x in w) == 1
 
 
 def test_budget_below_base_hint_wording():

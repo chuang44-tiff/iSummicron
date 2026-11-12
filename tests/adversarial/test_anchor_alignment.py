@@ -169,7 +169,6 @@ def test_focus_xy_anchor_is_locally_sharp(tmp_path):
         "--depth-scale", "10",
         "--downres", "2048",
         "--focus-xy", str(focus_x), str(focus_y),
-        "--psf-norm", "l1",
         "--hdr-source", "macos",
         "--output", str(out),
     ]
@@ -224,7 +223,6 @@ def test_face_region_sharpness_floor_canonical(tmp_path):
         "--depth-scale", "10",
         "--downres", "2048",
         "--focus-xy", str(focus_x), str(focus_y),
-        "--psf-norm", "l1",
         "--hdr-source", "macos",
         "--output", str(out),
     ]
@@ -278,7 +276,6 @@ def test_ldr_hdr_anchor_region_both_sharp(tmp_path):
             "--depth-scale", "10",
             "--downres", "2048",
             "--focus-xy", str(focus_x), str(focus_y),
-            "--psf-norm", "l1",
             "--hdr-source", hdr_src,
             "--output", str(out),
         ]

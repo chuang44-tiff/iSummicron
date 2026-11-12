@@ -17,7 +17,6 @@ import inspect
 import numpy as np
 import pytest
 
-import summicron.psf_model.downscale_tensor as dt
 import summicron.render.convolve as cv
 from summicron.render._artifacts import default_tensor_path
 from summicron.render._layered_composite import _layered_composite
@@ -37,13 +36,18 @@ def tensor():
 @pytest.fixture
 def spy(monkeypatch):
     calls = []
-    orig = dt._make_delta
+    orig = cv._make_delta
 
     def _wrapped(size):
         calls.append(size)
         return orig(size)
 
-    monkeypatch.setattr(dt, "_make_delta", _wrapped)
+    # Other tests pop ``summicron.render.convolve`` from sys.modules, so the live module
+    # (what lazily-importing helpers such as the ON compositor see) can be a different
+    # object from the ``cv`` imported at collection time. Patch both.
+    import sys
+    for mod in {id(m): m for m in (cv, sys.modules.get("summicron.render.convolve")) if m}.values():
+        monkeypatch.setattr(mod, "_make_delta", _wrapped)
     return calls
 
 
@@ -53,12 +57,12 @@ def _geom(kH, long_edge, ref=5712):
     return ps, sk
 
 
-def _build(kern, ri, d, ps, sk, use_idx=True, norm="l1", dr=None):
+def _build(kern, ri, d, ps, sk, use_idx=True, dr=None):
     kH = kern.shape[2]
     if dr is None:
         dr = np.linspace(0.0, 1.0, kern.shape[1])
     return _build_basis_kernel(
-        ri, d, use_idx, dr, kern, kH, kern.shape[3], norm, ps, sk,
+        ri, d, use_idx, dr, kern, kH, kern.shape[3], ps, sk,
     )
 
 
@@ -109,19 +113,6 @@ def test_fires_on_all_shipped_d0_slices(tensor, spy, size):
         assert np.argwhere(k != 0).tolist() == [[sk // 2, sk // 2]]
         assert k.sum() == 1.0
     assert spy == [sk] * NR
-
-
-@pytest.mark.parametrize("use_idx", [True, False])
-def test_peak_norm_delta_is_still_delta(tensor, spy, use_idx):
-    K, dr = tensor["kernels"], tensor["defocus_ratios"]
-    ps, sk = _geom(183, 2048)
-    for ri in range(NR):
-        k = _build(K, ri, 0 if use_idx else float(dr[0]), ps, sk,
-                   use_idx=use_idx, norm="peak", dr=dr)
-        assert k.max() == 1.0 and k.sum() == 1.0
-    assert len(spy) == NR
-    k = _build(_synth(_centre(val=0.25)), 0, 0, ps, sk, norm="peak")
-    assert k.max() == 1.0 and k[sk // 2, sk // 2] == 1.0
 
 
 def test_even_kernel_fires_at_floor_centre(spy):
@@ -177,10 +168,9 @@ def test_non_delta_does_not_fire(spy, name, slice0):
     assert len(spy) == 1
 
 
-@pytest.mark.parametrize("norm", ["l1", "peak"])
-def test_negative_centre_does_not_fire(spy, norm):
+def test_negative_centre_does_not_fire(spy):
     ps, sk = _geom(183, 2048)
-    _build(_synth(_centre(val=-1.0)), 0, 0, ps, sk, norm=norm)
+    _build(_synth(_centre(val=-1.0)), 0, 0, ps, sk)
     assert spy == []
 
 

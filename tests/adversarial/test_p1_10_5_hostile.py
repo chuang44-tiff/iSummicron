@@ -153,7 +153,7 @@ class TestNoDeprecationOnDefaultCall:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             render(
-                img, tensor, depth_m=depth_m, psf_norm="l1",
+                img, tensor, depth_m=depth_m,
                 bright_pass_region_size=0,
                 bright_pass_floor=0.10,
                 bright_pass_norm_pct=99.0,

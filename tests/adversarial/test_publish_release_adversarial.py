@@ -6,6 +6,7 @@ Spec: doc/plan/phase2/section30_release-build/publish-helper-spec.md
 """
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import re
@@ -13,8 +14,10 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,8 +29,17 @@ sys.path.insert(0, str(REL))
 import changelog_section as cs  # noqa: E402
 import render_notes as rn  # noqa: E402
 
-NPZ_SRC = ROOT / "summicron" / "_artifacts" / "codev_render_v1.npz"
-V = "9.9.9"
+sys.path.insert(0, str(REL))
+import privacy_gate as _pg  # noqa: E402
+
+# a small SYNTHETIC single tensor with a neutral name (a psf_lens*.npz would, fail closed, be a two-lens stage)
+NPZ_NAME = "synthetic_single.npz"
+_NPZ_DIR = Path(tempfile.mkdtemp(prefix="pub_syn_"))
+atexit.register(shutil.rmtree, _NPZ_DIR, ignore_errors=True)
+NPZ_SRC = _NPZ_DIR / NPZ_NAME
+np.savez(NPZ_SRC, kernels=np.full((2, 2, 3, 3), 0.1, np.float32), radial_edges=np.linspace(0, 1, 3),
+         defocus_ratios=np.linspace(0, 1, 2))
+V = "0.4.9"   # below 0.5.0: the single-tensor gate rules (>= 0.5.0 publishes with --lens-layout)
 AUTHOR = "T <1+chuang44-tiff@users.noreply.github.com>"
 NOREPLY = "1+chuang44-tiff@users.noreply.github.com"
 SCHEME_FILE = "file" + ":" + "//"
@@ -82,7 +94,7 @@ run it
 """
 CHANGELOG = """# Changelog
 
-## [9.9.9] - 2026-01-03
+## [0.4.9] - 2026-01-03
 
 ### Added
 
@@ -126,7 +138,7 @@ case "$1 $2" in
     draft=false; [ -f "$S/draft" ] && draft=true
     out=""; for f in "$S"/assets/*; do [ -e "$f" ] || continue
       out="$out{\"name\":\"$(basename "$f")\",\"size\":$(cat "$f")},"; done
-    echo "{\"tagName\":\"v9.9.9\",\"isDraft\":$draft,\"assets\":[${out%,}]}" ;;
+    echo "{\"tagName\":\"v0.4.9\",\"isDraft\":$draft,\"assets\":[${out%,}]}" ;;
   "release create")
     NEEDLE=--verify-tag; has "$@" || exit 99
     NEEDLE=--clobber; has "$@" && exit 99
@@ -212,10 +224,10 @@ class World:
         st = self.ws / "stage"
         (st / "summicron/render").mkdir(parents=True)
         (st / "summicron/_artifacts").mkdir(parents=True)
-        shutil.copyfile(NPZ_SRC, st / "summicron/_artifacts/codev_render_v1.npz")
+        shutil.copyfile(NPZ_SRC, st / "summicron/_artifacts" / NPZ_NAME)
         md5 = self.md5(NPZ_SRC)
         (st / "summicron/render/_bench.py").write_text(f'TENSOR_MD5 = "{md5}"\n')
-        (st / "summicron/render/_artifacts.py").write_text('_ARTIFACT_NAME = "codev_render_v1.npz"\n')
+        (st / "summicron/render/_artifacts.py").write_text('_ARTIFACT_NAME = "' + NPZ_NAME + '"\n')
         # stub gh + env
         self.bin.mkdir()
         gh = self.bin / "gh"
@@ -274,8 +286,8 @@ def test_t1_dry_run_is_offline_and_touches_nothing(w):
     assert r.returncode == 0, r.stderr + r.stdout
     out = r.stdout
     assert "DRY RUN" in out
-    assert re.search(r'git .*push --no-verify "?file:/{2}\S+ refs/heads/release/9\.9\.9:refs/heads/main', out)
-    assert "gh release create v9.9.9" in out and "--verify-tag" in out
+    assert re.search(r'git .*push --no-verify "?file:/{2}\S+ refs/heads/release/0\.4\.9:refs/heads/main', out)
+    assert "gh release create v0.4.9" in out and "--verify-tag" in out
     for n in ASSET_NAMES:
         assert n in out
     assert w.log() == []
@@ -437,7 +449,7 @@ def test_t23_fix_b1_extra_commit_below_tip_refused(w):
 
 def test_t24_empty_changelog_section_refused(w):
     # section header present but body empty
-    chg = "# Changelog\n\n## [9.9.9] - 2026-01-03\n\n## [0.0.1] - 2025-01-01\n\n- old\n"
+    chg = "# Changelog\n\n## [0.4.9] - 2026-01-03\n\n## [0.0.1] - 2025-01-01\n\n- old\n"
     (w.clone / "CHANGELOG.md").write_text(chg)
     _git("add", "-A", cwd=w.clone)
     _git("commit", "-q", "--amend", "--no-edit", cwd=w.clone, env=_ident())
@@ -543,11 +555,11 @@ def test_t15_pr_mode(w):
 
 # ---------------------------------------------------------------- T16-T17
 def test_t16_changelog_extraction():
-    assert cs.section(CHANGELOG, "9.9.9") == "### Added\n\n- newest thing"
+    assert cs.section(CHANGELOG, "0.4.9") == "### Added\n\n- newest thing"
     assert cs.section(CHANGELOG, "9.9.8") == "- middle thing"
     assert cs.section(CHANGELOG, "9.9.7") == "- oldest thing"  # link refs excluded
     with pytest.raises(ValueError):
-        cs.section(CHANGELOG.replace("[9.9.9]", "[9x9x9]"), "9.9.9")
+        cs.section(CHANGELOG.replace("[0.4.9]", "[0x4x9]"), "0.4.9")
     with pytest.raises(ValueError):
         cs.section("## [1.0.0]\n\n## [0.9.0]\n- a\n", "1.0.0")
     with pytest.raises(ValueError):
@@ -719,7 +731,7 @@ def test_notes_source_tamper_refused(w):
 
 # ── release date: heading, commit message and publisher agree ────────────────
 def test_date_publish_heading_commit_mismatch_refused(w):
-    chg = (w.clone / "CHANGELOG.md").read_text().replace("## [9.9.9] - 2026-01-03", "## [9.9.9] - 2026-01-04")
+    chg = (w.clone / "CHANGELOG.md").read_text().replace("## [0.4.9] - 2026-01-03", "## [0.4.9] - 2026-01-04")
     (w.clone / "CHANGELOG.md").write_text(chg)
     _git("add", "-A", cwd=w.clone)
     _git("commit", "-q", "--amend", "-m", f"release: {V} (2026-01-03)", cwd=w.clone, env=_ident())

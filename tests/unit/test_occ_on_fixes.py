@@ -86,22 +86,11 @@ def test_finite_depth_selector_only_bit_identical_to_head():
     assert np.array_equal(compute_edge_selector(d, dm, 8), expect)
 
 
-def test_peak_on_equals_peak_off_and_warns():
-    d = _depth()
-    off = _render(d, psf_norm="peak", occlusion_compositing="off")
-    msgs: list[str] = []
-    with pytest.warns(RuntimeWarning, match="peak"):
-        on = _render(d, psf_norm="peak", occlusion_compositing="on",
-                     on_progress=msgs.append)
-    assert np.array_equal(on, off)
-    assert any("peak" in m for m in msgs)
-
-
 def test_l1_on_unaffected_no_warning():
     d = _depth()
     with warnings.catch_warnings():
         warnings.simplefilter("error", RuntimeWarning)
-        on = _render(d, psf_norm="l1", occlusion_compositing="on")
-    off = _render(d, psf_norm="l1", occlusion_compositing="off")
+        on = _render(d, occlusion_compositing="on")
+    off = _render(d, occlusion_compositing="off")
     assert np.isfinite(on).all() and on.shape == off.shape
     assert not np.array_equal(on, off)  # ON path really ran

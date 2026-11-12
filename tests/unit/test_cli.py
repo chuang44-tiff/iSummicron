@@ -79,37 +79,3 @@ def test_downres_array_skip_exact_match():
     assert out is img
 
 
-# ---------- Render CLI: --psf-norm flag (P1.7 stamp-mode) ----------
-
-
-def _render_parser_psf_norm() -> argparse.ArgumentParser:
-    """Shim mirroring the render CLI's --psf-norm definition."""
-    p = argparse.ArgumentParser()
-    p.add_argument("--image", required=True)
-    p.add_argument("--tensor", required=True)
-    p.add_argument(
-        "--psf-norm", choices=["l1", "peak"], default="l1",
-    )
-    return p
-
-
-@pytest.mark.parametrize("value", ["l1", "peak"])
-def test_render_psf_norm_accepts_valid_values(value):
-    ns = _render_parser_psf_norm().parse_args(
-        ["--image", "a.jpg", "--tensor", "b.npz", "--psf-norm", value]
-    )
-    assert ns.psf_norm == value
-
-
-def test_render_psf_norm_default_is_l1():
-    ns = _render_parser_psf_norm().parse_args(
-        ["--image", "a.jpg", "--tensor", "b.npz"]
-    )
-    assert ns.psf_norm == "l1"
-
-
-def test_render_psf_norm_rejects_invalid_value():
-    with pytest.raises(SystemExit):
-        _render_parser_psf_norm().parse_args(
-            ["--image", "a.jpg", "--tensor", "b.npz", "--psf-norm", "invalid"]
-        )

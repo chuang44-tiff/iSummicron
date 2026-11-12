@@ -1,0 +1,30 @@
+{
+  "name": "US 3,006,249 Example II (35 mm f/2 build)",
+  "citation": "ray-traced from the expired US patent 3,006,249, Example II, using optiland (US 3,006,249 is expired; public domain)",
+  "gs_reference": "scan",
+  "prescription_variant": "patent",
+  "units": "patent units, focal length f = 100, F:2, 8 elements",
+  "modified_from_patent": false,
+  "stop_assumed": "0.6 of a3, measured from Fig. 2",
+  "stop_fraction_of_a3": 0.6,
+  "a3_patent": 10.9,
+  "image_gap_placeholder": 50,
+  "half_field_deg": 31.7,
+  "surfaces": [
+    {"id": "R1",  "radius": 82.9,   "thickness": 7.5,  "nd": 1.7440, "vd": 44.9},
+    {"id": "R2",  "radius": 116.4,  "thickness": 0.66, "nd": null,   "vd": null, "gap": "a1"},
+    {"id": "R3",  "radius": 36.1,   "thickness": 11.3, "nd": 1.7440, "vd": 44.9},
+    {"id": "R4",  "radius": 285.7,  "thickness": 3.2,  "nd": 1.6477, "vd": 33.88},
+    {"id": "R5",  "radius": 25.4,   "thickness": 5.9,  "nd": null,   "vd": null, "gap": "a2"},
+    {"id": "R6",  "radius": 48.6,   "thickness": 4.8,  "nd": 1.7200, "vd": 50.31},
+    {"id": "R7",  "radius": 57.8,   "thickness": 6.54, "nd": null,   "vd": null, "gap": "a3 (front part, 0.6 a3)"},
+    {"id": "STOP","radius": null,   "thickness": 4.36, "nd": null,   "vd": null, "gap": "a3 (rear part, 0.4 a3)", "stop": true},
+    {"id": "R8",  "radius": -128.3, "thickness": 4.8,  "nd": 1.7200, "vd": 50.31},
+    {"id": "R9",  "radius": -56.8,  "thickness": 3.6,  "nd": null,   "vd": null, "gap": "a4"},
+    {"id": "R10", "radius": -28.6,  "thickness": 3.2,  "nd": 1.6989, "vd": 30.05},
+    {"id": "R11", "radius": -198.3, "thickness": 11.3, "nd": 1.7880, "vd": 47.44},
+    {"id": "R12", "radius": -39.2,  "thickness": 0.66, "nd": null,   "vd": null, "gap": "a5"},
+    {"id": "R13", "radius": -103.3, "thickness": 14.3, "nd": 1.7440, "vd": 44.9},
+    {"id": "R14", "radius": -66.8,  "thickness": 50,   "nd": null,   "vd": null, "gap": "image (placeholder; refocused)"}
+  ]
+}

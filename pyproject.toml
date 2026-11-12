@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "isummicron"
-version = "0.4.0"
-description = "iSummicron — organic, spatially-varying bokeh for iPhone Portrait photos from CodeV-simulated double-Gauss PSF kernels (Summicron proxy)"
+version = "0.5.0"
+description = "Spatially varying bokeh for iPhone Portrait photos from ray-traced lens PSFs"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
@@ -39,13 +39,13 @@ isummicron = "summicron.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["summicron"]
 
-# P1.audit Item 7: the canonical CodeV tensor lives at
-# summicron/_artifacts/codev_render_v1.npz. hatchling's default file
-# discovery includes .npz under packaged dirs, but we force-include it
-# explicitly so a future `.gitignore`/`MANIFEST.in` change can't quietly
-# drop it from the wheel.
+# The two ray-traced PSF tensors live at summicron/_artifacts/. hatchling's
+# default file discovery includes .npz under packaged dirs, but we
+# force-include them explicitly so a future `.gitignore`/`MANIFEST.in` change
+# can't quietly drop them from the wheel.
 [tool.hatch.build.targets.wheel.force-include]
-"summicron/_artifacts/codev_render_v1.npz" = "summicron/_artifacts/codev_render_v1.npz"
+"summicron/_artifacts/psf_lens35_us3006249_fu0.4.npz" = "summicron/_artifacts/psf_lens35_us3006249_fu0.4.npz"
+"summicron/_artifacts/psf_lens50_doublegauss_fu0.4.npz" = "summicron/_artifacts/psf_lens50_doublegauss_fu0.4.npz"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

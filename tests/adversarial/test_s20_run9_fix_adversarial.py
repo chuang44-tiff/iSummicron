@@ -237,8 +237,9 @@ def _bullet(txt: str, flag: str) -> str:
 
 @needs_overlay
 def test_readme_depth_source_bullet_matches_parser_default():
+    # 0.5.0: the quick-start flag bullets moved from the README to docs/usage.md ("The quick-start flags")
     d = _parser_defaults()["depth_source"]
-    txt = (OVERLAY / "README.md").read_text()
+    txt = (OVERLAY / "docs" / "usage.md").read_text()
     b = _bullet(txt, "--depth-source")
     assert f"default is `{d}`" in b, b
     # wrong polarity: no remaining claim that lidar is the default
@@ -247,15 +248,18 @@ def test_readme_depth_source_bullet_matches_parser_default():
 
 
 @needs_overlay
-def test_readme_psf_norm_default_claim_matches_parser():
-    assert _parser_defaults()["psf_norm"] == "l1"
-    assert "(the default)" in _bullet((OVERLAY / "README.md").read_text(), "--psf-norm l1")
+def test_readme_has_no_psf_norm_claim():
+    # 0.5.0 removed --psf-norm: the README may name it only as removed (migration note), never as a flag to use
+    lines = [ln for ln in (OVERLAY / "README.md").read_text().splitlines() if "--psf-norm" in ln]
+    assert lines, "the migration note must name the removed flag"
+    assert all("removed" in ln for ln in lines), lines
+    assert not any(ln.lstrip().startswith("isummicron render") for ln in lines)
 
 
 @needs_overlay
 def test_readme_hdr_source_bullet_not_stale_about_tonemap():
     assert _parser_defaults()["tonemap"] == "auto"
-    b = _bullet((OVERLAY / "README.md").read_text(), "--hdr-source macos")
+    b = _bullet((OVERLAY / "docs" / "usage.md").read_text(), "--hdr-source macos")
     assert "tonemaps through Core Image" not in b, b
 
 
@@ -269,11 +273,11 @@ def _sections(txt: str) -> dict[str, str]:
 
 
 @needs_overlay
-def test_changelog_top_entry_parses_as_0_4_0_like_b5():
+def test_changelog_top_entry_parses_as_top_version_like_b5():
     """B5: grep -m1 '^## \\[' | sed 's/^## \\[([^]]+)\\].*/\\1/'."""
     txt = (OVERLAY / "CHANGELOG.md").read_text()
     first = next(ln for ln in txt.splitlines() if ln.startswith("## ["))
-    assert re.sub(r"^## \[([^\]]+)\].*", r"\1", first) == "0.4.0", first
+    assert re.sub(r"^## \[([^\]]+)\].*", r"\1", first) == "0.5.0", first
 
 
 @needs_overlay

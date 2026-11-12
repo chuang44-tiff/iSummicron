@@ -7,49 +7,28 @@ Consumed by ``summicron.tools.anchor_picker`` (emitted command template),
 ``anchor_picker`` imports it; it is NOT a public API and is intentionally
 not re-exported from ``summicron.render``.
 
-Re-pinned by the Run 6 default flip: ``CANONICAL_FLAGS`` now rides the
-defaults (the approved look); ``CANONICAL_FLAGS_OLD`` + ``*_OLD`` pins keep
-the pre-flip look reproducible.
-
 ``CANONICAL_FLAGS`` omits ``--image``, ``--focus-xy``, ``--output`` and
-``--tensor`` (the renderer defaults to the wheel-shipped tensor).
-Stdlib-only: no imports.
+``--tensor`` / ``--lens`` (the renderer defaults to the wheel-shipped 35 mm
+f/2 tensor). Stdlib-only: no imports.
 """
 
 CANONICAL_FLAGS = (
     "--depth-source", "lidar",
     "--downres", "2048",
-    "--psf-norm", "l1",
     "--hdr-source", "macos",
 )
-
-# Pre-Run-6 look, still reachable (and pinned) via explicit flags.
-OLD_LOOK_FLAGS = (
-    "--depth-guided", "off",
-    "--depth-mapping", "linear",
-    "--tonemap", "ci",
-    "--bright-pass-thresh", "1.0",
-)
-CANONICAL_FLAGS_OLD = (
-    "--depth-source", "lidar",
-    "--depth-scale", "10",
-    "--downres", "2048",
-    "--psf-norm", "l1",
-    "--hdr-source", "macos",
-    *OLD_LOOK_FLAGS,
-)
-G1_MD5_OLD = "a106801a97a05ee7d5033e2b8d647f11"  # live gate (explicit old flags)
-ON_MD5_OLD = "6cebff5403f7f0fdcda109cb8bbff35a"
 
 G1_IMAGE = "iphoneImage/IMG_6915.HEIC"
 G1_FOCUS_XY = (0.40, 0.45)
 
-# OFF (default) canonical render md5 — G1 SHOWSTOPPER pin.
-# Re-pinned by Run 6 (default flip: guided depth + reciprocal-depth mapping + input-lut tone;
-# macOS 27.2 build 26B123, pyobjc-core 12.2). The previous pin (Q-b-flip,
-# ``a106801a…``) is ``G1_MD5_OLD`` above, reproduced by ``CANONICAL_FLAGS_OLD``.
-G1_MD5 = "f5d86ac424b612770d79a0d1694736b7"
+# OFF (default) canonical render md5 — G1 SHOWSTOPPER pin (35 mm f/2 default).
+G1_MD5 = "a15314d23dfe09070667a15f66a362d9"
 # Same argv + ``--occlusion-compositing on``.
-ON_MD5 = "0def67a51677aa1394307aa974fcb3fd"
-# md5 of summicron/_artifacts/codev_render_v1.npz (default_tensor_path()).
-TENSOR_MD5 = "e6f501546cb77ba40ad904dbd4ba9369"
+ON_MD5 = "3659beff1f331b6d041ca50d90421718"
+# Same argv + ``--lens 50`` (OFF).
+LENS50_MD5 = "b2eebd9d0605cb1a1e1e617b12f41d0a"
+# md5 of the shipped tensor files (default_tensor_path("35") / ("50")).
+TENSOR_MD5 = "894f858c54e0cad45eedcddab47be6d7"
+TENSOR_MD5_50 = "10824ae374e7ab57e651d3d770a76b6a"
+# Non-default shipped artifacts: file name -> md5 (read by the release gate).
+EXTRA_ARTIFACT_MD5 = {"psf_lens50_doublegauss_fu0.4.npz": "10824ae374e7ab57e651d3d770a76b6a"}

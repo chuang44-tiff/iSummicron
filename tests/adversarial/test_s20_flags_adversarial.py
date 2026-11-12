@@ -127,24 +127,19 @@ def test_input_lut_validation_order_both_errors():
 
 def test_new_fields_with_other_modes_construct():
     _mk(depth_mapping="diopter", depth_guided="on", occlusion_compositing="on")
-    _mk(depth_mapping="diopter", psf_norm="peak")
     _mk(tonemap="input-lut", hdr_source="macos", occlusion_compositing="on",
-        psf_norm="peak", downres=1)
+        downres=1)
 
 
 def test_canonical_bench_diopter_override():
     o = RenderOptions.canonical_bench("a.heic", (0.5, 0.5), depth_mapping="diopter",
                                       depth_guided="on", depth_gain=1.5)
     assert o.depth_scale == 1.0 and o.depth_mapping == "diopter"
-    with pytest.raises(ValueError):
-        RenderOptions.canonical_bench("a.heic", (0.5, 0.5), old_look=True,
-                                      depth_gain=1.5)
+    with pytest.raises(TypeError):  # old_look was removed in 0.5.0
+        RenderOptions.canonical_bench("a.heic", (0.5, 0.5), old_look=True)
 
 
 def test_canonical_bench_defaults_unchanged():
-    o = RenderOptions.canonical_bench("a.heic", (0.5, 0.5), old_look=True)
-    assert (o.depth_guided, o.depth_mapping, o.depth_gain, o.tonemap,
-            o.bright_pass_thresh) == ("off", "linear", "auto", "ci", 1.0)
     o = RenderOptions.canonical_bench("a.heic", (0.5, 0.5))
     assert (o.depth_guided, o.depth_mapping, o.depth_gain, o.tonemap,
             o.bright_pass_thresh) == ("auto", "auto", "auto", "auto", None)
@@ -249,8 +244,6 @@ def test_sdr_only_input_lut_monocular(sdr_files, tmp_path, ext):
     ["--depth-mapping", "diopter", "--depth-scale", "10"],
     ["--depth-guided", "on", "--occlusion-compositing", "on"],
     ["--depth-mapping", "diopter", "--occlusion-compositing", "on"],
-    ["--depth-mapping", "diopter", "--psf-norm", "peak"],
-    ["--hdr-source", "macos", "--tonemap", "input-lut", "--psf-norm", "peak"],
     ["--hdr-source", "macos", "--tonemap", "input-lut", "--occlusion-compositing", "on"],
     ["--hdr-source", "macos", "--tonemap", "input-lut", "--bright-pass-thresh", "auto",
      "--depth-mapping", "diopter", "--depth-guided", "on"],

@@ -87,7 +87,7 @@ def _frozen_old_two_pass(d_idx, premult_pad, matte3_pad, **g):
                 continue
             kb = cv._build_basis_kernel(
                 ri, d_idx, True, g["defocus_ratios"], g["kernels"],
-                g["kH"], g["kW"], g["psf_norm"], g["pix_scale"], g["scaled_ksize"],
+                g["kH"], g["kW"], g["pix_scale"], g["scaled_ksize"],
             )
             if kb.max() > 0.5 * kb.sum():
                 for c in range(3):
@@ -103,10 +103,7 @@ def _frozen_old_two_pass(d_idx, premult_pad, matte3_pad, **g):
                 rot_deg = -(theta_a * 180.0 / np.pi + 90.0)
                 rot = ndimage_rotate(kb, rot_deg, reshape=False, order=1)
                 rot = np.maximum(rot, 0.0)
-                if g["psf_norm"] == "l1":
-                    rot /= rot.sum() + 1e-12
-                else:
-                    rot /= max(float(rot.max()), 1e-10)
+                rot /= rot.sum() + 1e-12
                 for c in range(3):
                     conv = fftconvolve(img_pad[:, :, c], rot, mode="same").astype(np.float32)
                     out[:, :, c] += w_ang * conv[pad:pad + H, pad:pad + W]
@@ -118,7 +115,7 @@ def _frozen_old_two_pass(d_idx, premult_pad, matte3_pad, **g):
     return conv_c, conv_a3[:, :, 0]
 
 
-def _case(H, W, psf_norm, corpus_ref, d_idx, seed=0):
+def _case(H, W, corpus_ref, d_idx, seed=0):
     rng = np.random.default_rng(seed)
     kern = _kernels()
     Nr = kern.shape[0]
@@ -143,7 +140,7 @@ def _case(H, W, psf_norm, corpus_ref, d_idx, seed=0):
     common = dict(
         kernels=kern, defocus_ratios=np.linspace(0, 1, kern.shape[1]),
         kH=kern.shape[2], kW=kern.shape[3], pad=pad, pix_scale=pix_scale,
-        scaled_ksize=scaled_ksize, psf_norm=psf_norm, H=H, W=W,
+        scaled_ksize=scaled_ksize, H=H, W=W,
     )
     return dict(
         common=common, premult_pad=premult_pad, matte_pad=matte_pad,
@@ -152,13 +149,12 @@ def _case(H, W, psf_norm, corpus_ref, d_idx, seed=0):
     )
 
 
-@pytest.mark.parametrize("psf_norm", ["l1", "peak"])
 @pytest.mark.parametrize("H,W", [(129, 97), (257, 193)])
 @pytest.mark.parametrize("d_idx", [0, 1, 3])  # delta slab + angular slabs
 @pytest.mark.parametrize("scale", [1.0, 0.5])  # render pix_scale
-def test_fused_equals_frozen_two_pass(psf_norm, H, W, d_idx, scale):
+def test_fused_equals_frozen_two_pass(H, W, d_idx, scale):
     cref = float(max(H, W)) / scale
-    cs = _case(H, W, psf_norm, cref, d_idx)
+    cs = _case(H, W, cref, d_idx)
     common = cs["common"]
     old_c, old_a = _frozen_old_two_pass(
         d_idx, cs["premult_pad"], cs["matte3_pad"],
@@ -178,15 +174,22 @@ def test_fused_equals_frozen_two_pass(psf_norm, H, W, d_idx, scale):
             kernels=common["kernels"], defocus_ratios=common["defocus_ratios"],
             kH=common["kH"], kW=common["kW"], pad=common["pad"],
             pix_scale=common["pix_scale"], scaled_ksize=common["scaled_ksize"],
-            psf_norm=psf_norm, H=H, W=W,
+            H=H, W=W,
         )
     assert old_c.any() and old_a.any()
-    assert np.array_equal(conv_c, old_c)
-    assert np.array_equal(conv_a, old_a)
+    # Tolerance, not exact equality: the fused path and the frozen path use
+    # different FFT sizes/batching, so pocketfft's SIMD paths on other CPUs
+    # (e.g. the CI runner) differ at float32 ULP level (workers do not matter;
+    # byte-identical on the M4 Max).  1e-6 relative is ~8 ULP and still far
+    # below any real weight/order bug (a 1e-4 kernel-weight change fails).
+    for new, old in ((conv_c, old_c), (conv_a, old_a)):
+        np.testing.assert_allclose(
+            new, old, rtol=1e-6, atol=1e-6 * max(1.0, float(np.abs(old).max()))
+        )
 
 
 def test_oracle_covers_multiple_radial_bins_and_wedges():
-    cs = _case(129, 97, "l1", 129.0, 2)
+    cs = _case(129, 97, 129.0, 2)
     basis_w = cv._radial_basis_weights(cs["radial_frac"], cs["r_centers"])
     active = [ri for ri in range(basis_w.shape[0]) if basis_w[ri].max() >= 0.01]
     assert len(active) >= 2
@@ -264,7 +267,7 @@ def test_cancel_during_over_raises_and_stops_progress():
 
 
 def test_preset_cancel_raises_before_any_irfft2(monkeypatch):
-    cs = _case(65, 49, "l1", 65.0, 1)
+    cs = _case(65, 49, 65.0, 1)
     c = cs["common"]
     basis_w = cv._radial_basis_weights(cs["radial_frac"], cs["r_centers"])
     n = {"irfft2": 0}
@@ -287,13 +290,13 @@ def test_preset_cancel_raises_before_any_irfft2(monkeypatch):
             conv_a=np.zeros((65, 49), np.float32), cancel=ev,
             kernels=c["kernels"], defocus_ratios=c["defocus_ratios"],
             kH=c["kH"], kW=c["kW"], pad=c["pad"], pix_scale=c["pix_scale"],
-            scaled_ksize=c["scaled_ksize"], psf_norm="l1", H=65, W=49,
+            scaled_ksize=c["scaled_ksize"], H=65, W=49,
         )
     assert n["irfft2"] == 0
 
 
 def test_float64_inputs_raise_typeerror():
-    cs = _case(129, 97, "l1", 129.0, 1)
+    cs = _case(129, 97, 129.0, 1)
     common = cs["common"]
     basis_w = cv._radial_basis_weights(cs["radial_frac"], cs["r_centers"])
     conv_c = np.zeros((129, 97, 3), dtype=np.float32)

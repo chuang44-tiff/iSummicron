@@ -1,76 +1,33 @@
 # iSummicron
 
-**Real-lens bokeh for iPhone Portrait photos: a simulated lens PSF that changes with position in the frame and with depth.**
+**Real-lens bokeh for iPhone Portrait photos: blur shapes ray-traced from public lens designs, changing with position in the frame and with depth.**
 
-The Python import name is `summicron`. The distribution and CLI are `isummicron`.
+A phone's portrait mode blurs the background with the same round disc everywhere. A real lens does not: its blur spots have bright rims, and toward the frame edge they turn into eggs and cat's eyes that circle the center. iSummicron ray-traces two lens designs to get those shapes (their point spread functions, or PSFs), then paints them into your photo using its depth map.
 
-## Gallery
+[![Synthetic Christmas lights: the sharp input, a plain round disc and the real-lens 35 mm f/2 blur, bottom-left corner enlarged 2 times](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/fig_xmas_zoom_input_disc_35.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/fig_xmas_zoom_input_disc_35.jpg)
 
-Sample Portrait photo, focus `0.40 0.39`, `--downres 2048`, quick-start flags. Click an image for full size. The crops are 1:1 pixels, toward the right edge of the frame.
+Input (point lights enlarged for visibility) | plain round disc of matched size | real-lens blur, 35 mm default. A 2× crop of the bottom-left corner of one synthetic scene: point lights far behind a bauble that is in focus. The real lens turns each light into an oval or rounded box with a bright rim, tilted to face away from the frame center.
 
-| Before | After |
-| --- | --- |
-| [![Before: the input](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_before.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_before.jpg) | [![After: rendered with iSummicron](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_after.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_after.jpg) |
-| [![Before, edge crop](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_before_edge.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_before_edge.jpg) | [![After, edge crop](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_after_edge.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_after_edge.jpg) |
+**Who it's for:** lens designers and lens enthusiasts who want to see how a lens design's bokeh would look in a photo. iSummicron starts from the lens prescription itself and renders that design's look onto everyday iPhone Portrait photos, including the look of rare or historic lenses. That is why the PSFs are ray-traced from a prescription with optiland, not measured or learned: any published design can be traced, including lenses nobody owns or that are too rare to measure, and the bokeh character (cat-eye, swirl) follows from the optics.
 
-The images are attached to the v0.4.0 release.
+Two designs ship. The default 35 mm f/2 (US 3,006,249, Example II) gives smaller blur and clips hard in the corners. The 50 mm f/2 double-Gauss (`--lens 50`, the optiland sample) gives larger shapes that flatten and turn along the swirl toward the edges; it is traced beyond its design field, so its edge effects are large by construction. Both are [compared against plain discs](docs/how-it-works.md#christmas-lights-demo). To render another design, see [Your own lens](#your-own-lens).
 
-## Why
+**You need:** Python 3.12 and an iPhone Portrait-mode HEIC (other photos fall back to estimated depth). It is developed and tested on macOS with Apple Silicon; Linux and Windows are untested and render without HDR highlights. The distribution and CLI are `isummicron`; the Python import name is `summicron`.
 
-Phone portrait blur is the same everywhere in the frame. A real lens is not: its blur changes shape from the center to the corners (swirl, cat-eye) and with distance from the focus plane. iSummicron convolves each pixel with a point spread function (PSF) picked by the pixel's radial position, angle and depth, from a table simulated in CODE V.
+**Scope:** bokeh only: blur shape, its variation across the frame, and in-focus to out-of-focus transitions. Color science and tone curves are out of scope. This is a solo-dev portfolio project, not a commercial product and not a paper.
 
-The field variation of the shipped PSF table is still subtle: highlights render as near-round discs. Making it physically right is the goal of the next releases.
-
-**Scope:** bokeh only: blur shape, its variation across the field, and in-focus to out-of-focus transitions. Color science and tone curves are out of scope. This is a solo-dev portfolio project, not a commercial product and not a paper.
-
-> Summicron and Leica are trademarks of Leica Camera AG. iSummicron is not affiliated with, sponsored by, or endorsed by Leica Camera AG. The shipped PSF is a simulated generic double-Gauss used as a proxy, not a measurement of any Leica lens.
-
-## The lens, honestly
-
-The wheel ships `summicron/_artifacts/codev_render_v1.npz`, a 4D tensor `(R=12 radial bins, D=11 distances, 183, 183)` of float32 **CODE V-simulated** PSFs. The simulated design is a **generic ~100 mm f/2 double-Gauss** (CODE V sample design `ag_dblgauss`), focused at 0.7 m with distances out to 20 m. Its green (550 nm) channel is used for all three RGB channels. It stands in for a Summicron-style double-Gauss. It is **not** a measured Leica lens.
+> Summicron and Leica are trademarks of Leica Camera AG. iSummicron is not affiliated with, sponsored by, or endorsed by Leica Camera AG. The shipped PSFs are ray-traced design prescriptions, not measurements of any Leica lens.
 
 ## Install
 
-### From a release (recommended)
+macOS does not ship `python3.12`; install it first (for example `brew install python@3.12`).
 
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install "isummicron[heic,hdr-macos] @ https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/isummicron-0.4.0-py3-none-any.whl"
+pip install "isummicron[heic,hdr-macos] @ https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/isummicron-0.5.0-py3-none-any.whl"
 ```
 
-Or from the tag: `pip install "isummicron[heic,hdr-macos] @ git+https://github.com/chuang44-tiff/iSummicron@v0.4.0"`. Add `depth` to the extras for the monocular fallback. All versions are listed at https://github.com/chuang44-tiff/iSummicron/releases.
-
-### From source (development)
-
-With conda:
-
-```bash
-git clone https://github.com/chuang44-tiff/iSummicron.git && cd iSummicron
-git checkout v0.4.0
-conda env create -f environment.yml && conda activate isummicron
-pip install -e '.[heic,depth,hdr-macos,eval-quality,dev]'
-```
-
-With a plain virtual environment (Python 3.12):
-
-```bash
-python3.12 -m venv .venv && source .venv/bin/activate
-pip install -e '.[heic,hdr-macos]'
-```
-
-Core dependencies are numpy, scipy and pillow. Optional extras:
-
-- `heic`: pillow-heif, for HEIC input.
-- `depth`: torch and transformers, for the monocular Depth Anything V2 Small fallback.
-- `hdr-macos`: pyobjc Quartz (which re-exports Core Image), darwin only.
-- `eval-quality`: scikit-image.
-- `dev`: pytest, ruff and pyyaml.
-
-A missing extra fails with an actionable `ImportError`.
-
-In the conda environment, import numpy before torch in your own scripts: the conda-forge numpy/scipy and the pip torch wheel each bundle an OpenMP runtime, and importing torch first aborts with `OMP: Error #15`.
-
-Tested with: macOS 26/27 arm64, Python 3.12, torch 2.12, transformers 5.9, numpy 2.4, pyobjc 12.2.
+Or from the tag: `pip install "isummicron[heic,hdr-macos] @ git+https://github.com/chuang44-tiff/iSummicron@v0.5.0"`. Both lenses' blur-shape tables are inside the wheel. Installing from source, the optional extras and running the tests are in the [usage guide](docs/usage.md#installing-from-source).
 
 ## Try it
 
@@ -78,111 +35,83 @@ Download the sample Portrait HEIC from this release and verify it:
 
 ```bash
 mkdir -p iphoneImage && cd iphoneImage
-curl -LO https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input.HEIC
-curl -LO https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/SHA256SUMS
+curl -LO https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/Demo_input.HEIC
+curl -LO https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/SHA256SUMS
 shasum -a 256 -c --ignore-missing SHA256SUMS && cd ..
 ```
 
 The sample has its location and time metadata stripped and shows a person; the release notes list what metadata remains. Then render it:
 
 ```bash
-isummicron render --image iphoneImage/Demo_input.HEIC --focus-xy 0.40 0.39 --depth-source lidar --downres 2048 --psf-norm l1 --hdr-source macos --out-dir runs/render
+isummicron render --image iphoneImage/Demo_input.HEIC --focus-xy 0.40 0.39 --depth-source lidar --downres 2048 --hdr-source macos --out-dir runs/render
 ```
 
-This takes about 35 s on an Apple Silicon Mac (dev machine) and writes a `.jpg` and a `.png` into `runs/render`. Native 5712×4284 takes a few minutes and about 5.4 GB of RAM (the memory guard's conservative estimate is about 9.4 GiB, under the 12 GiB default); set `ISUMMICRON_MAX_BYTES` to change the memory guard. Without `--out-dir`, output goes to `./runs/render`.
+This takes about 18 seconds on an Apple M4 Max Mac and writes a `.jpg` and a `.png` into `runs/render`. The result, with the default 35 mm lens (click for full size; the second row is a 1:1 crop toward the right edge of the frame):
 
-What the flags do:
-
-- `--depth-source lidar` reads LiDAR depth from the HEIC's auxiliary image (strict: it errors without one). The default is `auto`: LiDAR when the HEIC carries a depth image, otherwise monocular depth with a note. The default look also refines the depth with a guided filter and maps it through a reciprocal (diopter) curve.
-- `--hdr-source macos` loads the HDR gain map, so specular highlights keep their headroom through the render. The default is `auto` (the gain map when the macOS loader and the data are present, otherwise SDR with a note). With `--tonemap auto` the final tone follows the input photo's own SDR tone through a measured luma lookup table (`input-lut`); pass `--tonemap ci` for the Apple Core Image tonemap instead.
-- `--psf-norm l1` (the default) keeps the kernels L1-normalized.
-
-`isummicron render --help` lists every flag; `python -m summicron.render.convolve` accepts the identical set.
-
-## Picking a focus point
-
-`--focus-xy X Y` is the in-focus point in normalized image coordinates: X is the column, Y the row, `(0, 0)` is the top-left. Tap the subject's eye or face.
-
-- **With the picker:** `pip install matplotlib` (a Tk-capable Python is needed), then run `python -m summicron.tools.anchor_picker --image iphoneImage/Demo_input.HEIC`. Click the subject and copy the printed `--focus-xy` values into `isummicron render`. The picker prints a developer-style command; keep only its `--focus-xy`.
-- **By hand:** read the pixel position in any viewer and divide by the image width and height.
-
-Without `--focus-xy`, the closest subject is in focus.
-
-## Common flags
-
-| Flag | Meaning |
+| Before | After |
 | --- | --- |
-| `--focus-xy X Y` | In-focus point, normalized. |
-| `--downres N` | Long edge in pixels. 2048 is the fast preview. |
-| `--depth-source` | `auto` (default: LiDAR when the HEIC has a depth image, else monocular), `lidar` (strict), or `monocular` (Depth Anything V2 Small). |
-| `--depth-scale` | Multiplier on the depth map in meters (only the old linear depth mapping uses it; the default diopter mapping ignores it). |
-| `--hdr-source` | `auto` (default) or `macos`: keep highlight headroom (macOS only); `none` is the 8-bit load. |
-| `--out-dir`, `--output` | Output directory, or one exact output file. |
-| `--occlusion-compositing` | `on` removes halos at depth edges (off by default, slower). |
-| `--tensor` | Use your own PSF tensor (see below). |
+| [![Before: the input](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/Demo_input_before.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/Demo_input_before.jpg) | [![After: rendered with iSummicron](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/Demo_input_after.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/Demo_input_after.jpg) |
+| [![Before, edge crop](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/Demo_input_before_edge.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/Demo_input_before_edge.jpg) | [![After, edge crop](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/Demo_input_after_edge.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/Demo_input_after_edge.jpg) |
 
-Full list: [docs/cli-reference.md](docs/cli-reference.md).
+On your own Portrait photos on macOS, `isummicron render --image photo.HEIC --focus-xy X Y` picks the same depth and HDR settings automatically and renders at full size; add `--downres 2048` for the fast preview and `--lens 50` for the 50 mm lens. `--focus-xy X Y` is the in-focus point in normalized image coordinates (X is the column, Y the row, `(0, 0)` is the top-left); without it, the closest subject is in focus.
 
-### Experimental flags
-
-These are experimental and off by default; the default output is unchanged. They may change or go away in a later release.
-
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--kernel-family {codev,synthetic}` | `codev` | `synthetic` builds physically sized round defocus discs around the CODE V aberration PSF at run time. Needs LiDAR depth and `--psf-norm l1`; not combinable with `--tensor`. |
-| `--lens-aperture-mm MM` | `17.5` (synthetic) | Synthetic only: entrance-pupil diameter, 3-30 mm, or a preset `35/2` (17.5), `50/2` (25), `apple` (13.5). |
-| `--bright-stamp {auto,peak,l1}` | `auto` | Bright-pass stamp: `auto` is `peak` (codev) or `l1` (synthetic). |
-| `--bright-stamp-gain G` | `2.0` under `l1` | Gain of the `l1` stamp, in (0, 16]. |
-
-The synthetic family is cached at `~/Library/Caches/isummicron/synth` (override with `ISUMMICRON_CACHE_DIR`); nothing is written into the installed package. The synthetic discs are round, so they carry no cat-eye shape.
-
-## Documentation
-
-- [Usage guide](docs/usage.md)
-- [CLI reference](docs/cli-reference.md)
-- [Python API](docs/python-api.md)
-- [Troubleshooting](docs/troubleshooting.md)
-- [FAQ](docs/faq.md)
-- [CHANGELOG.md](CHANGELOG.md) and the [Releases page](https://github.com/chuang44-tiff/iSummicron/releases)
+The [usage guide](docs/usage.md) covers the focus picker, depth, HDR, memory and the common flags; the [CLI reference](docs/cli-reference.md) lists every flag. The same photo next to the iPhone's own Portrait mode is under [On a real photo](docs/how-it-works.md#on-a-real-photo).
 
 ## How it works
 
-The pipeline loads the image and its depth (LiDAR when present), refines it with a guided filter, maps it through a reciprocal (diopter) curve, then anchors depth so the tapped pixel lands on the tensor's in-focus slice. Each pixel gets a kernel blended from its radial position (8 angular wedges rotate each kernel with the pixel's azimuth) and its depth slab. Depth slabs are gathered and composited in linear light, and the output is tonemapped to SDR.
+There is also an interactive explainer with a draggable animation and lens switches: [isummicron_pipeline.html](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/isummicron_pipeline.html), a Release asset. It is one self-contained file: download it and open it in a browser.
 
-## Bring your own PSF tensor
+![Animation: a point light moves away from the 35 mm lens, then toward the frame corner, then around the frame, with the blur shape shown beside the ray drawing](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/fig_journey_35.gif)
 
-A tensor is an `.npz` with these required keys (without `object_distances_m`, `isummicron render` fails with `depth_m requires tensor with object_distances_m metadata`):
+The 35 mm design, traced: a point light moves from 0.7 m (in focus) out to 20 m, then to the frame corner, then once around the frame. Left: the rays through the lens. Right: the blur shape on the sensor.
 
-| Key              | Shape          | Notes                                    |
-| ---------------- | -------------- | ---------------------------------------- |
-| `kernels`        | `(R, D, H, W)` | float32; H == W; odd-sided; non-negative |
-| `radial_edges`   | `(R+1,)`       | float64; strictly increasing in `[0, 1]` |
-| `defocus_ratios` | `(D,)`         | float64; strictly increasing in `[0, 1]` |
-| `object_distances_m` | `(D,)`     | float; object distances in meters, one per D node |
+A lens bends the rays from a point of light so that they meet again at one spot. If they meet in front of the sensor, they have spread out again by the time they arrive, and the dot becomes a disc. The lens's aberrations light that disc unevenly, which gives it a bright rim. Toward the frame edge the cone of light is tilted, and the rims of the glass cut it from two sides; what gets through is an off-center slice, the cat-eye.
 
-Recommended extra keys:
+<img src="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.0/fig_psf_grid_35.png" width="560" alt="Grid of traced 35 mm blur shapes: five positions from the frame center to the corner, by five distances from 0.98 m to 20 m">
 
-- `focus_distance_m`: the in-focus distance in meters. It must equal `object_distances_m[0]`, or loading fails with `TensorValidationError`. If it is missing, 0.7 m is assumed silently.
-- `corpus_ref_long_edge`: the image long edge in pixels that the kernels are sized for. If it is missing, 5976 is assumed silently (the shipped tensor uses 5712).
-- `delta_guard_applied`: if it is missing, the loader warns that in-focus detail will smear.
+The 35 mm shapes the renderer uses. Rows: frame center (top) to corner (bottom). Columns: distance of the light, 0.98 m to 20 m, with focus at 0.7 m. Up is the direction away from the frame center.
 
-Add `schema_version='1.0'` to silence the legacy-layout warning.
+The renderer turns each shape to face away from the frame center, so across a whole picture the shapes circle the center. That is swirly bokeh. The shapes are made once, offline, with optiland, an open-source Python ray tracer; nothing is traced while you render a photo. Each photo is then blurred in depth layers, using its own depth map. On macOS the photo's HDR gain map is used, so a blurred lamp keeps its real brightness.
 
-Pass it with `--tensor my_tensor.npz`. The loader validates the schema and never unpickles. The shipped tensor is a working example.
+The trace, the render pipeline, the formulas and every figure are in [docs/how-it-works.md](docs/how-it-works.md).
 
-## Tests
+## Your own lens
 
-```bash
-python -m pytest tests/ -m "not slow" -p no:xdist -q    # FAST suite
-ruff check summicron/
-```
+The renderer accepts any PSF table in the layout of the two shipped ones, each `(R=12 radial bins, D=11 distances, 183, 183)` float32 in an `.npz`: pass it with `--tensor my_tensor.npz`. In a source checkout, `scripts/build_psf/` traces a new table from a lens prescription (a JSON file) with optiland. The file layout is under [Bring your own PSF tensor](docs/usage.md#bring-your-own-psf-tensor), and the build commands are under [Rebuilding the tables](docs/how-it-works.md#rebuilding-the-tables).
 
-Tests that need sample images or developer-only assets skip themselves when those are absent. The suite imports `summicron` from the checkout, so install with `pip install -e`.
+## Migrating from 0.4.x
+
+0.5.0 replaces the bundled PSF table, so every render differs from 0.4.x. `--kernel-family`, `--lens-aperture-mm` and `--psf-norm` are removed, and any of them now stops with a one-line error; drop them and choose the lens with `--lens 35` (the default) or `--lens 50`. The full table is under "Migrating to 0.5.0" in [CHANGELOG.md](CHANGELOG.md).
+
+## Limits
+
+- **Turning in 8 steps.** Shapes face away from the center to within ±22.5°, in 45° steps around the frame.
+- **Blur crosses the subject's outline.** By default, background blur is not stopped there. This changes only a hairline; see [Occlusion compositing](docs/usage.md#occlusion-compositing).
+- **HDR needs macOS.** Elsewhere renders are SDR and the brightest lights come out dimmer. Linux and Windows are untested.
+- **No edge darkening.** The clipping at the frame edge changes the shape, but the renderer does not darken the corners to match.
+- **Front and back look the same.** Blur in front of the focus point uses the same shapes as blur behind it. A real lens differs there.
+- **One color of light.** The trace uses green light (550 nm) only, so there is no color fringing in the bokeh.
+- **Assumed rims.** The glass rim sizes follow a stated rule, not a measured lens. Both designs are public prescriptions, not measurements of any production lens.
+- **Depth is the weak link.** The phone's depth sensor can read a window pane instead of what is behind it, and the blur can only be as right as the depth.
+- **Photos without a depth map are unvalidated.** They render with estimated depth; results on such photos have not been checked in 0.5.0.
+
+Each limit is explained in [How it works](docs/how-it-works.md#limits).
+
+## Documentation
+
+[How it works](docs/how-it-works.md) · [Usage guide](docs/usage.md) · [CLI reference](docs/cli-reference.md) · [Python API](docs/python-api.md) · [Troubleshooting](docs/troubleshooting.md) · [FAQ](docs/faq.md) · [CHANGELOG.md](CHANGELOG.md) · [Releases page](https://github.com/chuang44-tiff/iSummicron/releases)
 
 ## Prior art
 
-**Learning Lens Blur Fields** (Lin et al., TPAMI 2025: [arXiv 2310.11535](https://arxiv.org/abs/2310.11535), [project page](https://blur-fields.github.io/), [code](https://github.com/estherlin/learning-lens-blur-fields)) published measured, spatially varying lens blur fields for several smartphones and Canon EF primes. It is the direct prior art for position- and depth-dependent PSF rendering. iSummicron differs in shipping a discrete, inspectable `.npz` kernel bank and in rendering iPhone Portrait captures end to end (LiDAR depth, tap-to-focus, HDR highlights, depth-layered compositing). Its PSFs are simulated, not measured.
+**Learning Lens Blur Fields** (Lin et al., TPAMI 2025: [arXiv 2310.11535](https://arxiv.org/abs/2310.11535), [project page](https://blur-fields.github.io/), [code](https://github.com/estherlin/learning-lens-blur-fields)) published measured, spatially varying lens blur fields for several smartphones and Canon EF primes. It is the direct prior art for position- and depth-dependent PSF rendering. That work measures and learns the blur of specific physical devices, so it reproduces the cameras and lenses you have.
 
-## License
+iSummicron starts from the other end: it simulates a lens design from its prescription, with PSFs ray-traced from public prescriptions, not measured. So it is aimed at lens designers and lens enthusiasts, and at the look of lenses you may not have. It also differs in shipping a discrete, inspectable `.npz` kernel bank and in rendering iPhone Portrait captures end to end (LiDAR depth, tap-to-focus, HDR highlights, depth-layered compositing).
 
-Apache-2.0, for the code and for the shipped PSF tensor. See `LICENSE` and `NOTICE`. Depth Anything V2 Small weights (Apache-2.0) are downloaded at runtime and are not redistributed.
+## Credits and license
+
+- **35 mm f/2 lens:** ray-traced from the expired US patent 3,006,249, Example II, using optiland.
+- **50 mm f/2 lens:** the double-Gauss sample prescription that ships with optiland (MIT license).
+- **Ray tracing:** optiland (PyPI package `optiland`, MIT license), used offline to build the lens tables.
+- **Images:** the Christmas-lights scene and the diagrams are synthetic. The kitchen crops come from the sample photo, with metadata removed.
+
+The code and both shipped tensors are Apache-2.0. The 50 mm tensor is traced from optiland's sample prescription, which stays under the MIT license. See `LICENSE` and `NOTICE`. Depth Anything V2 Small weights (Apache-2.0) are downloaded at runtime and are not redistributed.

@@ -139,7 +139,7 @@ class TestWrongPolarityMatte:
 
         # WITHOUT corruption the guard does NOT fire (correct matte sense).
         on_u8, on_lin = render(
-            img, _tensor(), depth_m=depth.copy(), psf_norm="l1",
+            img, _tensor(), depth_m=depth.copy(),
             occlusion_compositing="on",
         )
         assert np.isfinite(on_lin).all()
@@ -159,7 +159,7 @@ class TestWrongPolarityMatte:
         monkeypatch.setattr(_LCmod.np, "argmax", _broken_argmax)
         with pytest.raises(RuntimeError, match="polarity/partition guard"):
             render(
-                img, _tensor(), depth_m=depth.copy(), psf_norm="l1",
+                img, _tensor(), depth_m=depth.copy(),
                 occlusion_compositing="on",
             )
 
@@ -252,7 +252,7 @@ class TestConnectedHairAlpha:
         depth = np.full((h, w), 18.0, np.float32)
         depth[:, w // 2:w // 2 + 1] = 0.7
         on_u8, on_lin = render(
-            img, _tensor(), depth_m=depth.copy(), psf_norm="l1",
+            img, _tensor(), depth_m=depth.copy(),
             occlusion_compositing="on",
         )
         assert np.isfinite(on_lin).all()
@@ -407,7 +407,7 @@ class TestValidatorEdges:
             np.linspace(1, 18, 96)[None, :], (96, 96)
         ).astype(np.float32).copy()
         with pytest.raises(ValueError, match="occlusion_compositing"):
-            render(img, _tensor(), depth_m=depth, psf_norm="l1",
+            render(img, _tensor(), depth_m=depth,
                    occlusion_compositing="ON")  # case-sensitive: not a choice
 
     def test_shadow_match_requirement_still_fires_with_occlusion_on(self):
@@ -436,9 +436,9 @@ class TestOffBitIdRobustness:
         depth = np.broadcast_to(
             np.linspace(1, 18, 96)[None, :], (96, 96)
         ).astype(np.float32).copy()
-        a, _ = render(img, _tensor(), depth_m=depth.copy(), psf_norm="l1",
+        a, _ = render(img, _tensor(), depth_m=depth.copy(),
                       occlusion_compositing="off")
-        b, _ = render(img, _tensor(), depth_m=depth.copy(), psf_norm="l1",
+        b, _ = render(img, _tensor(), depth_m=depth.copy(),
                       occlusion_compositing="off", slab_batch_size=2)
         assert self._md5(a) == self._md5(b), "OFF bytes perturbed by unrelated flag"
 
@@ -448,8 +448,8 @@ class TestOffBitIdRobustness:
         depth = np.broadcast_to(
             np.linspace(1, 18, 96)[None, :], (96, 96)
         ).astype(np.float32).copy()
-        base, base_lin = render(img, _tensor(), depth_m=depth.copy(), psf_norm="l1")
-        off, off_lin = render(img, _tensor(), depth_m=depth.copy(), psf_norm="l1",
+        base, base_lin = render(img, _tensor(), depth_m=depth.copy())
+        off, off_lin = render(img, _tensor(), depth_m=depth.copy(),
                               occlusion_compositing="off")
         assert np.array_equal(base, off)
         assert np.array_equal(base_lin, off_lin)
@@ -471,10 +471,8 @@ class TestEnergyCoverageInvariants:
         img = np.full((h, w, 3), 0.5, np.float32)
         depth = np.full((h, w), 0.7, np.float32)
         depth[:, w // 2:] = 15.0
-        off_u8, off_lin = render(img, _tensor(), depth_m=depth.copy(),
-                                 psf_norm="l1", occlusion_compositing="off")
-        on_u8, on_lin = render(img, _tensor(), depth_m=depth.copy(),
-                               psf_norm="l1", occlusion_compositing="on")
+        off_u8, off_lin = render(img, _tensor(), depth_m=depth.copy(), occlusion_compositing="off")
+        on_u8, on_lin = render(img, _tensor(), depth_m=depth.copy(), occlusion_compositing="on")
         assert abs(float(on_lin.mean()) - float(off_lin.mean())) < 0.02, (
             f"ON mean {on_lin.mean():.4f} drifted from OFF mean "
             f"{off_lin.mean():.4f} — energy/coverage leak in the OVER path"

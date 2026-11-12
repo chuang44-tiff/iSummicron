@@ -330,18 +330,7 @@ def test_gainmap_heic_without_lidar_explicit_lidar_strict(tmp_path):
         _run(_opts(tmp_path, depth_source="lidar"), ps)
 
 
-# ---- old_look / defaults / determinism / ON ------------------------------------------
-
-def test_old_look_untouched():
-    from summicron.render import _bench
-    o = RenderOptions.canonical_bench("x.heic", (0.4, 0.45), old_look=True)
-    assert o.hdr_source == "macos" and o.tonemap == "ci"
-    assert o.depth_guided == "off" and o.depth_mapping == "linear"
-    assert o.depth_scale == 10.0 and o.bright_pass_thresh == 1.0
-    assert "macos" in _bench.CANONICAL_FLAGS_OLD
-    assert _bench.G1_MD5_OLD.startswith("a106801a")
-    n = RenderOptions.canonical_bench("x.heic", (0.4, 0.45))
-    assert n.hdr_source == "macos"
+# ---- defaults / determinism / ON ------------------------------------------
 
 
 def test_old_look_pipeline_emits_no_auto_chatter(tmp_path):

@@ -52,8 +52,7 @@ def _effective_kernel_at(img_lin_out: np.ndarray, y: int, x: int, half: int) -> 
 
 
 def _load_v3_tensor_or_skip() -> dict:
-    if not V3_TENSOR_PATH.exists():
-        pytest.skip(f"v3 tensor not present at {V3_TENSOR_PATH}")
+    # 0.5.0: the shipped artifact must exist; no skip guard.
     from summicron.render.convolve import load_tensor
     return load_tensor(V3_TENSOR_PATH)
 

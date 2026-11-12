@@ -3,7 +3,7 @@
 ``tests/unit/test_over_scatter_fused.py`` pins ``_over_scatter_slab`` in
 isolation. These probes close the orchestration gaps it does not reach:
 the basis_w hoist, the 2-D matte pad, the per-slab ``s_reach`` gate, the
-no-silhouette fast path, ``slab_batch_size``, the bright pass, ``psf_norm``
+no-silhouette fast path, ``slab_batch_size``, the bright pass,
 peak, kernel zoom (pix_scale < 0.95), odd/tiny frames, both depth polarities
 and an all-zero image -- all through ``render(..., occlusion_compositing="on")``.
 
@@ -78,7 +78,7 @@ def _scene(H, W, kind, seed=1):
 
 def _old_two_pass_shim(
     *, d_idx, premult_pad, matte_pad, basis_w, wedge_idx, kernels,
-    defocus_ratios, kH, kW, pad, pix_scale, scaled_ksize, psf_norm, H, W,
+    defocus_ratios, kH, kW, pad, pix_scale, scaled_ksize, H, W,
     fft_state, conv_c, conv_a, cancel,
 ):
     """Pre-Q-e OVER body via the LIVE fftconvolve branch (two passes)."""
@@ -95,10 +95,10 @@ def _old_two_pass_shim(
                 continue
             kb = cv._build_basis_kernel(
                 ri, d_idx, True, defocus_ratios, kernels,
-                kH, kW, psf_norm, pix_scale, scaled_ksize,
+                kH, kW, pix_scale, scaled_ksize,
             )
             cv._apply_kernel(
-                kb, w, img_pad, img_pad, img_pad, wedge_idx, pad, H, W, psf_norm,
+                kb, w, img_pad, img_pad, img_pad, wedge_idx, pad, H, W,
                 out, np.zeros((H, W, 3), np.float32), ws, dws, fft_state=None,
             )
     conv_a[...] = conv_a3[:, :, 0]
@@ -114,28 +114,28 @@ def _render_on(img, d, tensor, **kw):
 
 
 _CASES = [
-    # (H, W, kind, psf_norm, bright_thresh, slab_batch_size, zoom)
-    (61, 47, "near_left", "l1", 1e9, None, False),
-    (61, 47, "far_left", "l1", 1e9, None, False),
-    (47, 61, "disc", "l1", 1e9, 1, False),
-    (61, 47, "three", "l1", 0.5, 3, False),
-    (96, 128, "disc", "l1", 0.5, None, True),
-    (96, 128, "near_left", "l1", 0.5, 1, True),
-    (61, 47, "smooth", "l1", 1e9, None, True),
-    (61, 47, "flat", "l1", 1e9, None, False),
-    (5, 3, "near_left", "l1", 1e9, None, False),
+    # (H, W, kind, bright_thresh, slab_batch_size, zoom)
+    (61, 47, "near_left", 1e9, None, False),
+    (61, 47, "far_left", 1e9, None, False),
+    (47, 61, "disc", 1e9, 1, False),
+    (61, 47, "three", 0.5, 3, False),
+    (96, 128, "disc", 0.5, None, True),
+    (96, 128, "near_left", 0.5, 1, True),
+    (61, 47, "smooth", 1e9, None, True),
+    (61, 47, "flat", 1e9, None, False),
+    (5, 3, "near_left", 1e9, None, False),
 ]
 
 
-@pytest.mark.parametrize("H,W,kind,psf_norm,bt,sbs,zoom", _CASES)
+@pytest.mark.parametrize("H,W,kind,bt,sbs,zoom", _CASES)
 def test_render_on_bit_identical_to_old_two_pass(
-    monkeypatch, H, W, kind, psf_norm, bt, sbs, zoom
+    monkeypatch, H, W, kind, bt, sbs, zoom
 ):
     img, d = _scene(H, W, kind)
     if bt < 1e8:
         img[H // 4:H // 4 + 3, W // 4:W // 4 + 3] = 1.0  # bright-pass pixels
     t = _tensor(2.0 * max(H, W) if zoom else None)
-    kw = dict(psf_norm=psf_norm, bright_thresh=bt, slab_batch_size=sbs)
+    kw = dict(bright_thresh=bt, slab_batch_size=sbs)
     new, new_msgs = _render_on(img, d, t, **kw)
     monkeypatch.setattr(lc, "_over_scatter_slab", _old_two_pass_shim)
     old, old_msgs = _render_on(img, d, t, **kw)
@@ -191,7 +191,7 @@ def test_geometry_guard_rejects_mismatched_fft_state():
             basis_w=np.zeros((2, H, W), np.float32),
             wedge_idx=np.zeros((H, W), np.int32), kernels=None,
             defocus_ratios=None, kH=9, kW=9, pad=pad, pix_scale=1.0,
-            scaled_ksize=2 * pad + 1, psf_norm="l1", H=H, W=W, fft_state=fs,
+            scaled_ksize=2 * pad + 1, H=H, W=W, fft_state=fs,
             conv_c=np.zeros((H, W, 3), np.float32),
             conv_a=np.zeros((H, W), np.float32), cancel=None,
         )

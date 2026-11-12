@@ -214,7 +214,7 @@ def test_overlay_quickstart_flags_subset_of_canonical_and_agree():
     from summicron.render._bench import CANONICAL_FLAGS
     toks = _overlay_quickstart_cmd().split()
     canon = list(CANONICAL_FLAGS)
-    for flag in ("--depth-source", "--downres", "--psf-norm"):
+    for flag in ("--depth-source", "--downres"):
         if flag in toks and flag in canon:
             assert toks[toks.index(flag) + 1] == canon[canon.index(flag) + 1], flag
     assert "--depth-scale" not in canon or "--depth-scale" not in toks

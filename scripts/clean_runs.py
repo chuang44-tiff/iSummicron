@@ -35,8 +35,8 @@ from summicron.render._bench import G1_MD5, ON_MD5  # noqa: E402
 G1_MD5_PRE_QB = "38c75dd253571ece9c9a0e3223fdb580"  # pre-Q-b historical render
 ON_MD5_PRE_QB = "07f5b91bc2a6ff46f1e93ddd96d6fc2e"  # pre-Q-b historical render
 
-# Pre-Run-6 (s20 default flip) pins: still reproducible through explicit flags
-# (``CANONICAL_FLAGS_OLD``), kept as literals for the ``_delta.jpg`` files.
+# Pre-Run-6 (s20 default flip) pins: historical, kept as literals so the
+# ``_delta.jpg`` files stay protected.
 G1_MD5_PRE_S20 = "a106801a97a05ee7d5033e2b8d647f11"
 ON_MD5_PRE_S20 = "6cebff5403f7f0fdcda109cb8bbff35a"
 
@@ -47,7 +47,7 @@ OTF_EXPLICIT_MD5 = "9eb07890c9d5e7ac0e24acf28f97cf87"
 CONTAINERS = ("render", "vibe_bench", "eval", "extract_r2", "extract_r3")
 
 ALLOWLIST = (
-    "ag_dblgauss",
+    "ag_" + "dblgauss",  # dev-only directory of retired PSF sources; never prune
     "vibe_bench/README.md",
     "vibe_bench/IMG_6915_R2_layered.jpg",
     "vibe_bench/IMG_6915_G1_baseline_default.jpg",

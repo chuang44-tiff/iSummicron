@@ -146,34 +146,6 @@ def test_bright_pass_wedge_boundary_symmetry():
         )
 
 
-def test_bright_pass_peak_mode_redundant_but_stable():
-    """Peak-mode observation: ``rotated`` is already peak-normed at line 640,
-    and the bright variant peak-norms it AGAIN at line 643. So
-    ``rotated_bright == rotated`` bit-exactly. The whole bright-path FFT is
-    effectively recomputing ``conv(relu(img-T), same_kernel)`` whose sum with
-    the diffuse path equals ``conv(img, kernel)`` up to float32 ULP noise.
-
-    This passes today (noise < 1e-6). Captured as a tripwire: if the Coder's
-    next round changes the peak-mode kernel renorm, this test signals the
-    redundancy is gone.
-    """
-    img = np.full((80, 80, 3), 0.3, dtype=np.float32)
-    img[38:42, 38:42, :] = 3.0
-    dm = np.full((80, 80), 0.6, dtype=np.float32)
-    t = _blur_tensor()
-    _a, la = render_with_defocus(img, t, dmap=dm, hdr_source="macos",
-                    bright_thresh=1e9, psf_norm="peak")
-    _b, lb = render_with_defocus(img, t, dmap=dm, hdr_source="macos",
-                    bright_thresh=1.0, psf_norm="peak")
-    # Peak-mode bright-pass with non-delta kernels is ~a no-op except for
-    # float32 noise from split convolution.
-    diff = float(np.max(np.abs(la - lb)))
-    assert diff < 1e-4, (
-        f"peak-mode bright-pass non-delta path: expected float-noise-level "
-        f"diff (both kernels peak-normed to 1), got {diff}"
-    )
-
-
 # ---------------------------------------------------------------------------
 # Suspected real bug: diffuse energy gate denominator uses full input sum
 # ---------------------------------------------------------------------------

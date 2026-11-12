@@ -149,7 +149,7 @@ class TestNegativeGate:
     """L11 — negative kernels raise ValueError IF below the -1e-6 tolerance.
 
     The tolerance is intentionally NOT strict ``< 0``: cubic interpolation +
-    np.clip(0, None) in `codev_to_render.py` legitimately leaves ULP noise
+    np.clip(0, None) in the tensor builder legitimately leaves ULP noise
     in ``[-1e-7, 0)`` after expm1 decompression, and rejecting that would
     spuriously fail valid post-interp tensors.
     """
@@ -284,10 +284,6 @@ class TestDefaultTensorStillLoads:
     the new gates land. Catches any over-tight tolerance regressions.
     """
 
-    @pytest.mark.skipif(
-        not DEFAULT_TENSOR.exists(),
-        reason="wheel-shipped default tensor missing (summicron/_artifacts)",
-    )
     def test_default_tensor_loads_without_raise(self):
         t = load_tensor(DEFAULT_TENSOR)
         assert t["R"] == 12

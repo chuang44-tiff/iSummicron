@@ -14,6 +14,11 @@ isummicron render --image IMAGE [options]
 Required.
 Input image (HEIC, JPEG or PNG). LiDAR depth needs an iPhone Portrait HEIC; other images fall back to monocular depth under `--depth-source auto`.
 
+### `--lens {35|50}`
+
+Default: `35`. Choices: `35`, `50`.
+Bundled lens. `35` (default): a 35 mm f/2 ray-traced from the expired US patent 3,006,249, Example II, using optiland. `50`: a 50 mm f/2 double-Gauss, the optiland sample prescription. Both are traced design prescriptions, not measurements of any production lens. Not combinable with `--tensor`.
+
 ### `--out-dir DIR`
 
 Default: `unset`.
@@ -52,7 +57,7 @@ Default: `auto`. Choices: `auto`, `none`, `macos`.
 ### `--occlusion-compositing {off|on}`
 
 Default: `off`. Choices: `off`, `on`.
-`on`: layered compositing that removes halos at depth edges, for about 1.4–1.6× render time. With `--psf-norm peak` it falls back to `off` with a warning.
+`on`: layered compositing that stacks the depth layers front to back, for about 1.3–1.6× render time. Off by default: with real-lens blur it only changes a hairline along the subject's outline.
 
 ## Depth and tone
 
@@ -69,7 +74,7 @@ How depth maps onto the PSF table's distance axis. `auto`: `diopter` with LiDAR 
 ### `--depth-gain VALUE`
 
 Default: `auto`.
-Gain of the `diopter` mapping: `auto` (chosen per image) or a number in (0, 10].
+Gain of the `diopter` mapping: `auto` (a fixed 1.0, the physical value) or a number in (0, 10]. Larger means more blur and a narrower sharp zone.
 
 ### `--tonemap {auto|ci|input-lut}`
 
@@ -103,17 +108,12 @@ Default: `99.0`.
 ### `--tensor PATH`
 
 Default: `unset`.
-PSF tensor `.npz`. Default: the tensor shipped with the package.
+Your own PSF tensor `.npz` (see "Bring your own PSF tensor" in the usage guide; `scripts/build_psf` builds one with optiland). Default: the bundled tensor chosen by `--lens`. Not combinable with `--lens`.
 
 ### `--focus-target-m VALUE`
 
 Default: `unset`.
 Advanced. Tensor focus distance in meters (default: the tensor's own, 0.7 m for the shipped tensor). Other values warn that the subject may not be sharp.
-
-### `--psf-norm {l1|peak}`
-
-Default: `l1`. Choices: `l1`, `peak`.
-`l1`: energy-preserving kernels. `peak`: peak-normalized kernels; highlights bloom more and can clip.
 
 ### `--slab-batch-size N`
 
@@ -142,27 +142,25 @@ Default: `4.0`.
 Default: `1.0`.
 0–4. Strength multiplier (1.0 = exact match).
 
-## Kernel family (experimental)
-
-### `--kernel-family {codev|synthetic}`
-
-Default: `codev`. Choices: `codev`, `synthetic`.
-Experimental. `codev`: the shipped CODE V table. `synthetic`: physically sized defocus discs built around the CODE V aberration PSF at run time and cached in the user cache directory. The synthetic discs are round. Needs LiDAR depth, `--psf-norm l1` and a diopter mapping; not combinable with `--tensor`. May change or go away in a later release.
-
-### `--lens-aperture-mm VALUE`
-
-Default: `unset`.
-Experimental, synthetic family only. Entrance-pupil diameter in mm, 3-30, or a preset: `35/2` (17.5), `50/2` (25), `apple` (13.5). Larger gives bigger discs.
+## Bright stamp (experimental)
 
 ### `--bright-stamp {auto|peak|l1}`
 
 Default: `auto`. Choices: `auto`, `peak`, `l1`.
-Experimental. Bright-pass stamp: `auto` is `peak` for the `codev` family and `l1` for `synthetic`; `peak` is the peak-normalized kernel; `l1` is the L1-normalized kernel times `--bright-stamp-gain`. `l1` needs `--psf-norm l1`.
+Experimental. Bright-pass stamp: `auto` is `l1`; `peak` is the peak-normalized kernel; `l1` is the L1-normalized kernel times `--bright-stamp-gain`.
 
 ### `--bright-stamp-gain VALUE`
 
 Default: `unset`.
-Experimental. Gain of the `l1` bright stamp, a number in (0, 16] (2.0 under an `l1` stamp).
+Experimental. Gain of the `l1` bright stamp, a number in (0, 16] (default 2.0 under an `l1` stamp).
+
+## Removed in 0.5.0
+
+These flags are still recognised but only to stop with a one-line error. See "Migrating to 0.5.0" in the [CHANGELOG](../CHANGELOG.md).
+
+- `--kernel-family`: `render: --kernel-family was removed in 0.5.0; the only PSF source is the ray-traced lens tensor (use --lens 35|50 or --tensor PATH). See 'Migrating to 0.5.0' in CHANGELOG.md.`
+- `--lens-aperture-mm`: `render: --lens-aperture-mm was removed in 0.5.0; the only PSF source is the ray-traced lens tensor (use --lens 35|50 or --tensor PATH). See 'Migrating to 0.5.0' in CHANGELOG.md.`
+- `--psf-norm`: `render: --psf-norm was removed in 0.5.0; PSFs are always L1-normalised. See 'Migrating to 0.5.0' in CHANGELOG.md.`
 
 ## Environment variables
 

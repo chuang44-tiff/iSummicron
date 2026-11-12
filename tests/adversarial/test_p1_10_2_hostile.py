@@ -170,14 +170,14 @@ class TestRemovedImports:
 
     def test_otf_norm_make_delta_import_error(self):
         """`from summicron.psf_model.otf_norm import _make_delta` must raise
-        ImportError — _make_delta was relocated to downscale_tensor."""
+        ImportError — _make_delta now lives in summicron.render.convolve."""
         with pytest.raises((ImportError, ModuleNotFoundError)):
             from summicron.psf_model.otf_norm import _make_delta  # noqa: F401
 
-    def test_make_delta_importable_from_downscale_tensor(self):
-        """`from summicron.psf_model.downscale_tensor import _make_delta` must
-        succeed — _make_delta was moved here in Cut 2."""
-        from summicron.psf_model.downscale_tensor import _make_delta  # noqa: F401
+    def test_make_delta_importable_from_convolve(self):
+        """`from summicron.render.convolve import _make_delta` must
+        succeed (0.5.0: the builder module was removed)."""
+        from summicron.render.convolve import _make_delta  # noqa: F401
         assert callable(_make_delta), "_make_delta must be callable"
 
 

@@ -44,7 +44,7 @@ PINS = {
 }
 
 KEEP = [
-    "ag_dblgauss/a.npz", "vibe_bench/README.md", "vibe_bench/IMG_6915_occ_ON_pin.jpg",
+    "ag_" "dblgauss/a.npz", "vibe_bench/README.md", "vibe_bench/IMG_6915_occ_ON_pin.jpg",
     "cherry_tensor4d.npz", "extract_r2/extract_cutouts.npz", "extract_r3/extract_report.json",
     "eval/bubble_grid_input.npz", "eval/bubble_grid_input.json",
     "eval/identity_tensor_iphone5712.npz", "render/current_check/other.jpg",

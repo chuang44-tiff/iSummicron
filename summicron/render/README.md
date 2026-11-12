@@ -1,13 +1,15 @@
 # summicron/render/ -- Summicron PSF Renderer
 
-Applies a CODE V-simulated generic ~100 mm f/2 double-Gauss PSF table (a Summicron-style proxy,
-not a measured Leica lens) to a photo, varying with image position and depth.
+Apply ray-traced 35 mm f/2 point-spread functions (US patent 3,006,249,
+Example II, via optiland) to any input photo. Center stays sharp; edges and
+corners pick up the blur character of the traced lens. `--lens 50` selects the
+50 mm f/2 double-Gauss instead.
 
 ## Quick start
 
 ```bash
-# Render an iPhone photo (HEIC, JPEG, or PNG). --tensor defaults to the
-# wheel-shipped CodeV tensor (summicron/_artifacts/codev_render_v1.npz).
+# Render an iPhone photo (HEIC, JPEG, or PNG). --lens defaults to 35 (wheel-shipped
+# summicron/_artifacts/psf_lens35_us3006249_fu0.4.npz).
 isummicron render --image ~/Photos/IMG_1234.HEIC --out-dir ./runs/render
 ```
 
@@ -15,9 +17,9 @@ Output lands in `runs/render/` as both JPEG (q95) and PNG.
 
 ## Pipeline overview
 
-1. **Tensor build** (`../psf_model/codev_to_render.py`, `downscale_tensor.py`)
-   -- turns the CodeV-simulated per-distance PSF files into the
-   `(R=12, D=11, H, W)` render tensor shipped in `../_artifacts/`.
+1. **Tensor build** (`scripts/build_psf/`, offline, optiland)
+   -- ray-traces per-distance, per-radius PSFs into the
+   `(R=12, D=11, H, W)` render tensors shipped in `../_artifacts/`.
 2. **Render** (`convolve.py`) -- loads the tensor and an input image, builds
    a defocus map (synthetic radial quadratic, depth-map, or `depth_m` in
    meters from LiDAR/DA model), partitions the image into 8 defocus bins x
@@ -26,20 +28,14 @@ Output lands in `runs/render/` as both JPEG (q95) and PNG.
    normalization (P1.1), and applies mask weights after convolution to avoid
    ghost-copy artifacts on extended objects (P1.3).
 
-   With `--kernel-family synthetic`, `_resolve.resolve_family` selects the
-   kernel source and `_family.py` builds the synthetic disc family at run
-   time (cached in the user cache dir, not `_artifacts/`) instead of loading
-   the tensor file.
-
 ## CLI commands
 
 ```bash
 # Render (CLI subcommand; also `python -m summicron.render.convolve`)
 isummicron render --image INPUT --out-dir ./runs/render/
 
-# Rebuild the tensor from CodeV files (build-time tooling)
-python -m summicron.psf_model.codev_to_render --help
-python -m summicron.psf_model.downscale_tensor --help
+# Rebuild a tensor (build-time tooling, needs the optiland env)
+conda run -n optiland python scripts/build_psf/build_raytrace_tensor.py --help
 ```
 
 ## Direct Python usage
@@ -98,27 +94,27 @@ on output) and uses `scipy.signal.fftconvolve` per depth slab.
 
 - **Center** stays sharp -- the defocus map is 0 at image center, so the
   kernel there is a near-delta (identity).
-- **Edges and corners** pick up progressive blur shaped by the CODE V simulated
-  PSF kernels. The blur is not a uniform Gaussian; the kernels are rotated with
-  each pixel's azimuth (P1.0 kernel rotation). In this version the field
-  variation is subtle.
+- **Edges and corners** pick up progressive blur shaped by the ray-traced PSF kernels
+  (optiland). The blur is not a
+  uniform Gaussian; it carries the asymmetric coma character of the traced lens,
+  with tails pointing radially outward (P1.0 kernel rotation).
 - Transitions are smooth thanks to triangular-weight blending across 8 defocus
   bins combined with cos^2 slab taper across 12 radial slabs (P1.1), both with
   partition-of-unity normalization.
 
 ## Tensor evolution
 
-**v0 (current, 2026-04-15):** CodeV simulated PSF tensor, shape
+**Current (0.5.0):** ray-traced (optiland) PSF tensors, shape
 `kernels(R, D, H, W)` = `(12, 11, 183, 183)` float32 at iPhone pixel pitch
-(6.30 µm/px, `corpus_ref_long_edge=5712`). OTF-normalized at target pitch
-(P0.1 v3); center `(r=0, d=0)` is an exact single-pixel delta. Single focus
+(6.30 µm/px, `corpus_ref_long_edge=5712`). RAW (not OTF-normalized);
+center `(r=0, d=0)` is an exact single-pixel delta. Single focus
 distance (0.70 m). Tap-to-focus uses a wrap-around hack for near-focus.
 
 **Note:** an earlier measured-PSF tensor `(6, 4, 129, 129)` came from the
 removed measured-PSF pipeline (recoverable from tag `shelved-corpus-pipeline-v1`).
-The live tensor is always the CodeV one.
+The live tensors are the two optiland ones in `_artifacts/`.
 
-**Future — multi-focus-distance bank (P1.6):** 5 CodeV tensors at different
+**Future — multi-focus-distance bank (P1.6):** 5 tensors at different
 focus distances (0.7 m, 1.5 m, 3 m, 5 m, infinity). Tap-to-focus picks the
 nearest tensor; wrap-around hack goes away. Each tensor is
 `(12, 11, 183, 183)` at ship pitch. See (dev-only planning doc, not shipped)
@@ -129,17 +125,17 @@ bank was reprioritized to P1.6 after P1.2 distance-indexed renderer shipped.)
 ## Pixel-pitch kernel scaling (Day 6)
 
 The renderer auto-scales PSF kernels to match the input image resolution.
-The 4D tensor stores `corpus_ref_long_edge`. The live CodeV tensor uses
+The 4D tensor stores `corpus_ref_long_edge`. The live tensors use
 5712 (iPhone long edge); the legacy corpus tensor used 5976 (M10 long edge).
 At render time, `pix_scale = max(H, W) / corpus_ref_long_edge` shrinks the
-183x183 (CodeV) or 129x129 (corpus) kernels to the correct size for the working
+183x183 (shipped) or 129x129 (legacy) kernels to the correct size for the working
 image (e.g. ~44x44 at 2048px). The fallback default of 5976 fires a `load_tensor`
 warning when the tensor lacks the `corpus_ref_long_edge` key. The FFT pad size
 is derived dynamically from the scaled kernel rather than hardcoded.
 
 ## Known limitations
 
-- **Simulated PSFs.** Kernels are CodeV simulations, not measured from a
+- **Simulated PSFs.** Kernels are ray-traced design prescriptions, not measured from a
   physical lens.
 - **No LoCA (longitudinal chromatic aberration).** The same grayscale kernel
   is applied to R, G, and B identically. The green/magenta fringing

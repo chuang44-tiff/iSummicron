@@ -18,19 +18,3 @@ def _clear_memory_budget_env(monkeypatch):
     ``ISUMMICRON_MAX_BYTES``. Clear it so a developer's shell never changes a
     test outcome (CI determinism)."""
     monkeypatch.delenv("ISUMMICRON_MAX_BYTES", raising=False)
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _isolated_family_cache(tmp_path_factory):
-    """S22 S1: the synthetic kernel-family cache lives in the user cache dir.
-    Point it at a session tmp dir so no test writes to ~/Library/Caches."""
-    import os
-
-    d = tmp_path_factory.mktemp("isummicron_cache")
-    prev = os.environ.get("ISUMMICRON_CACHE_DIR")
-    os.environ["ISUMMICRON_CACHE_DIR"] = str(d)
-    yield d
-    if prev is None:
-        os.environ.pop("ISUMMICRON_CACHE_DIR", None)
-    else:
-        os.environ["ISUMMICRON_CACHE_DIR"] = prev

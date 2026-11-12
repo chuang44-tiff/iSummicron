@@ -1,0 +1,15 @@
+# Environment for the offline PSF build in scripts/build_psf/.
+# optiland is NOT a runtime dependency of the `summicron` package; the render
+# path never imports it. Create it with:
+#   conda env create -f environment-optiland.yml
+#   conda run -n optiland python scripts/build_psf/build_raytrace_tensor.py --help
+name: optiland
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - pip
+  - pip:
+      - optiland==0.6.3

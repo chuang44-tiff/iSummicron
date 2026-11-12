@@ -355,7 +355,7 @@ class TestDAxisStance:
         out = _build_basis_kernel(
             ri=2, d_center_or_idx=0.5, use_idx=False,
             defocus_ratios=defocus_ratios, kernels=kernels,
-            kH=kH, kW=kW, psf_norm="l1", pix_scale=1.0, scaled_ksize=kH,
+            kH=kH, kW=kW, pix_scale=1.0, scaled_ksize=kH,
         )
         assert out.shape == (kH, kW), (
             f"Expected scalar-D kernel shape ({kH}, {kW}); got {out.shape}"
@@ -421,7 +421,7 @@ class TestDispatchSignatureParity:
             "d_idx", "img_diffuse_pad", "img_bright_pad", "img_full_pad",
             "kernels", "defocus_ratios", "radial_frac_map", "r_centers",
             "wedge_idx", "kH", "kW", "pad", "pix_scale", "scaled_ksize",
-            "psf_norm", "H", "W", "output", "output_bright",
+            "H", "W", "output", "output_bright",
             "weight_sum", "delta_weight_sum",
         }
         missing = required - params

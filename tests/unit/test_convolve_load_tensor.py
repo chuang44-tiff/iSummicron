@@ -26,10 +26,6 @@ DEFAULT_TENSOR = default_tensor_path()
 class TestLoadTensorShapeDerivation:
     """L2 — R, D keys derived from kernels.shape[:2]."""
 
-    @pytest.mark.skipif(
-        not DEFAULT_TENSOR.exists(),
-        reason="wheel-shipped default tensor missing (summicron/_artifacts)",
-    )
     def test_default_tensor_R12_D11(self):
         t = load_tensor(DEFAULT_TENSOR)
         assert t["R"] == 12

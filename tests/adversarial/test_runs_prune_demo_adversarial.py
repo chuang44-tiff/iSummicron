@@ -69,7 +69,7 @@ PINS = {
 @pytest.fixture
 def tree(tmp_path):
     root = tmp_path / "runs"
-    for rel in ("ag_dblgauss/a.npz", "vibe_bench/README.md", "cherry_tensor4d.npz",
+    for rel in ("ag_" "dblgauss/a.npz", "vibe_bench/README.md", "cherry_tensor4d.npz",
                 "eval/bubble_input.npz", "render/armedge_visual/a.png",
                 "demo/g1.jpg"):
         _w(root, rel, rel.encode())
@@ -128,7 +128,7 @@ def test_plan_glob_hitting_allowlisted_eval_input_aborts_before_any_mutation(tre
 
 
 @pytest.mark.parametrize("victim", [
-    "ag_dblgauss", "vibe_bench/IMG_6915_R2_layered.jpg", "render/current_check", "demo",
+    "ag_" "dblgauss", "vibe_bench/IMG_6915_R2_layered.jpg", "render/current_check", "demo",
 ])
 def test_custom_plan_targeting_allowlist_aborts(tree, tmp_path, victim):
     plan = _plan() + ((victim, "delete", None, "hostile row"),)
@@ -238,7 +238,7 @@ def test_rerun_apply_is_noop_and_log_complete(tree, tmp_path):
                        "render/visual_p13"}
     assert all(r["new_path"] is None for r in recs if r["action"] == "delete")
     logged = {r["old_path"] for r in recs}
-    assert "render/armedge_visual" not in logged and "ag_dblgauss" not in logged
+    assert "render/armedge_visual" not in logged and "ag_" "dblgauss" not in logged
     # second apply: nothing to do, log unchanged, tree unchanged
     snap = _snap(tmp_path)
     rc2, _ = _run(tree, apply=True)

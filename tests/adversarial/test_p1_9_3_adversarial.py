@@ -34,9 +34,7 @@ from tests.fixtures.synthetic_tensor import make_synthetic_tensor, write_synthet
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TENSOR = default_tensor_path()
-CODEV_TO_RENDER_SRC = ROOT / "summicron" / "psf_model" / "codev_to_render.py"
 CONVOLVE_SRC = ROOT / "summicron" / "render" / "convolve.py"
-DOWNSCALE_SRC = ROOT / "summicron" / "psf_model" / "downscale_tensor.py"
 
 # The exact key-set `load_tensor` is contracted to return (spec §L2 + existing keys).
 EXPECTED_DICT_KEYS = frozenset(
@@ -48,7 +46,6 @@ EXPECTED_DICT_KEYS = frozenset(
         "delta_guard_applied",
         "object_distances_m",
         "focus_distance_m",
-        "synth_family",  # S22 S1 (additive)
         "R",
         "D",
     ]
@@ -212,7 +209,7 @@ class TestDtypeAndPolarityHostility:
     def test_wrong_polarity_delta_at_d_equals_D_minus_1(self, tmp_path):
         """MANDATORY wrong-polarity fixture: delta parked at far instead of near.
 
-        The S2 delta-guard (downscale_tensor.py:151-153) installs the delta at
+        The S2 delta-guard (ray_kernel.make_delta) installs the delta at
         `kernels[r, 0]` — the NEAR-defocus / in-focus slot. A tensor with
         delta at `d = D-1` (far defocus) inverts the physics: the renderer
         would produce sharp output for far-defocus pixels and blurred output
@@ -385,60 +382,13 @@ class TestMaxActiveSlabsWarnMessage:
 # 6. L11 / L6 grep gates — module-level literals must not reappear
 # ---------------------------------------------------------------------------
 
-class TestModuleLevelLiteralGrep:
-    """L6 — no module-level `R = 12` / `D = 11` in codev_to_render.py.
-    L7 — downscale_tensor must derive R/D from kernels.shape (no assertions
-    like `assert R == 12`).
-    """
-
-    def test_codev_to_render_no_R12_D11_literals(self):
-        src = CODEV_TO_RENDER_SRC.read_text()
-        # Walk lines. A literal `R = 12` or `D = 11` at the module level is
-        # forbidden; docstring/comment mentions are fine.
-        for i, line in enumerate(src.splitlines(), 1):
-            stripped = line.lstrip()
-            if stripped.startswith("#") or stripped.startswith('"""'):
-                continue
-            # Grep for live assignments
-            if stripped.startswith("R = 12") or stripped.startswith("D = 11"):
-                raise AssertionError(
-                    f"codev_to_render.py:{i} has forbidden module-level literal: {line!r}"
-                )
-
-    def test_downscale_tensor_derives_shape(self):
-        """L7 gate — downscale_tensor must destructure kernels.shape, not assert legacy R/D.
-        """
-        src = DOWNSCALE_SRC.read_text()
-        assert "R, D, orig_kH, orig_kW = kernels.shape" in src, (
-            "downscale_tensor must destructure kernels.shape, got source differs"
-        )
-        # Forbid any `assert R == 12` / `assert D == 11`
-        assert "assert R == 12" not in src
-        assert "assert D == 11" not in src
-
-    def test_L11_corpus_ref_comment_present(self):
-        """L11 spec — `_compute_corpus_ref` must carry the "must re-compute on
-        shape change; do not pin from old tensor" warning comment.
-        """
-        src = CODEV_TO_RENDER_SRC.read_text()
-        assert "_compute_corpus_ref" in src
-        # Comment can be in docstring or inline; we check for the critical phrase.
-        assert "re-compute" in src.lower() or "recompute" in src.lower(), (
-            "L11 docstring/comment about re-computing corpus_ref on R/D shape "
-            "change must be present near _compute_corpus_ref"
-        )
-        assert "do not pin" in src.lower(), (
-            "L11 docstring/comment must explicitly say 'do not pin from an old "
-            "tensor's metadata' (or equivalent phrasing)"
-        )
-
 
 # ---------------------------------------------------------------------------
 # 7. L1 — default tensor identity + path
 # ---------------------------------------------------------------------------
 
 class TestDefaultTensorUntouched:
-    """L1 — wheel-shipped default tensor (summicron/_artifacts/codev_render_v1.npz) stays at R=12/D=11.
+    """L1 — wheel-shipped default tensor (summicron/_artifacts/psf_lens35_us3006249_fu0.4.npz) stays at R=12/D=11.
 
     This test proves:
       (a) The file is present and its MD5 is recorded (for TL to cross-check
@@ -448,10 +398,6 @@ class TestDefaultTensorUntouched:
       (c) The loaded tensor's (R, D) agree with the spec (12, 11).
     """
 
-    @pytest.mark.skipif(
-        not DEFAULT_TENSOR.exists(),
-        reason="wheel-shipped default tensor missing (summicron/_artifacts)",
-    )
     def test_default_tensor_R12_D11_and_md5_recorded(self, capsys):
         t = load_tensor(DEFAULT_TENSOR)
         assert t["R"] == 12
@@ -467,7 +413,7 @@ class TestDefaultTensorUntouched:
     def test_adversarial_fixtures_never_target_real_tensor(self, tmp_path):
         """Sanity: write_synthetic_tensor writes under tmp_path, never the repo."""
         path = write_synthetic_tensor(tmp_path / "guard.npz", R=2, D=2)
-        # The path MUST live under tmp_path, never under runs/ag_dblgauss/.
+        # The path MUST live under tmp_path, never under summicron/_artifacts/.
         assert tmp_path in path.parents or path.parent == tmp_path
         # And the real file, if present, MUST NOT have tmp_path as a parent.
         if DEFAULT_TENSOR.exists():
@@ -502,43 +448,8 @@ class TestLoadTensorReturnKeySet:
 
 
 # ---------------------------------------------------------------------------
-# 9. codev_to_render file-naming drift — upstream D = len(files)
+# 9. (removed in 0.5.0: tensor-builder file-naming drift tests)
 # ---------------------------------------------------------------------------
-
-class TestCodevToRenderFileDrift:
-    """L6 — D is derived from len(files). Test what happens at boundaries.
-
-    We DO NOT invoke `convert()` against the real CodeV dir (it would run
-    slowly and is also tested in test_codev_to_render.py). Instead we probe
-    for regression via the source and by a dry-run with a synthetic dir.
-    """
-
-    def test_convert_raises_on_empty_dir(self, tmp_path):
-        """Empty input dir yields a clear RuntimeError, not a cryptic crash."""
-        from summicron.psf_model.codev_to_render import convert
-        with pytest.raises(RuntimeError, match="No input files"):
-            convert(input_dir=tmp_path, out_path=tmp_path / "out.npz")
-
-    def test_convert_glob_pattern_restrictive(self):
-        """Confirm the glob pattern matches only the intended CodeV files.
-
-        A file not matching `ag_dblgauss_f2.0_focus*_d*.npz` must NOT be picked
-        up, so a user who drops a helper .npz into runs/ag_dblgauss/ won't
-        inadvertently inflate D.
-        """
-        from summicron.psf_model.codev_to_render import DEFAULT_INPUT_DIR
-        # Files matching the glob (live).
-        files = sorted(DEFAULT_INPUT_DIR.glob("ag_dblgauss_f2.0_focus*_d*.npz"))
-        # Other .npz files that must NOT be picked up.
-        ag_files_all = sorted(DEFAULT_INPUT_DIR.glob("*.npz"))
-        non_distance = [f for f in ag_files_all if f not in files]
-        if not files:
-            pytest.skip(f"raw CodeV file absent: {DEFAULT_INPUT_DIR}")
-        # Examples in repo today: ag_dblgauss_f2.0_render.npz,
-        # plus any legacy downscaled sibling. These MUST be excluded.
-        assert any("render" in f.name for f in non_distance), (
-            "expected at least one non-distance .npz excluded by the glob"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -547,7 +458,7 @@ class TestCodevToRenderFileDrift:
 
 class TestKernelEnergyAcrossShapes:
     """Non-fixture invariant: every (r, d) slab must be L1 ≈ 1.0 after load
-    (regardless of shape / factory / CodeV origin), because L1 normalization
+    (regardless of shape / factory / origin), because L1 normalization
     is a stated pipeline property.
     """
 
@@ -563,16 +474,12 @@ class TestKernelEnergyAcrossShapes:
             f"min={sums.min():.6f} max={sums.max():.6f}"
         )
 
-    @pytest.mark.skipif(
-        not DEFAULT_TENSOR.exists(),
-        reason="wheel-shipped default tensor missing (summicron/_artifacts)",
-    )
     def test_default_tensor_l1_invariant_per_slab(self):
         t = load_tensor(DEFAULT_TENSOR)
         k = t["kernels"]
         R, D = k.shape[0], k.shape[1]
         sums = k.reshape(R * D, -1).sum(axis=1)
-        # downscale_tensor's G2 gate allows ±0.01 drift post-renorm.
+        # the tensor builder's gate allows ±0.01 drift post-renorm.
         assert np.all(np.abs(sums - 1.0) <= 0.01), (
             f"default tensor L1 drift > 0.01: "
             f"min={sums.min():.6f} max={sums.max():.6f}"

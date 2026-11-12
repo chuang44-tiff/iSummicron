@@ -248,9 +248,11 @@ def test_protected_files_unmodified_vs_head():
 
 def test_bench_pins_unchanged():
     from summicron.render import _bench
-    # Run 6: the old-look pins stay live under *_OLD (G1_MD5/ON_MD5 were re-pinned).
-    assert _bench.G1_MD5_OLD == "a106801a97a05ee7d5033e2b8d647f11"
-    assert _bench.ON_MD5_OLD == "6cebff5403f7f0fdcda109cb8bbff35a"
+    # 0.5.0: the old-look (*_OLD) pins were removed with the old tensor.
+    assert not hasattr(_bench, "G1_MD5_OLD") and not hasattr(_bench, "ON_MD5_OLD")
+    for name in ("G1_MD5", "ON_MD5", "LENS50_MD5", "TENSOR_MD5", "TENSOR_MD5_50"):
+        v = getattr(_bench, name)
+        assert len(v) == 32 and all(c in "0123456789abcdef" for c in v), name
 
 
 def test_importing_render_api_does_not_load_diopter():

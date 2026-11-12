@@ -9,29 +9,29 @@ quick start in the main README.
 
 ## PINS
 
-Exact md5 sums of the output JPEG and of the shipped tensor. They were measured on macOS 27.2 with pyobjc-core
-12.2; the HDR path uses Core Image, so other macOS versions can differ.
+Exact md5 sums of the output JPEG and of the two shipped tensors. They were measured on macOS 27.2 with
+pyobjc-core 12.2; the HDR path uses Core Image, so other macOS versions can differ.
 
 | Item | Value |
 |---|---|
-| Tensor (`summicron/_artifacts/codev_render_v1.npz`) | `e6f501546cb77ba40ad904dbd4ba9369` (`TENSOR_MD5`) |
-| Default look, command below | `f5d86ac424b612770d79a0d1694736b7` (`G1_MD5`) |
-| Default look + `--occlusion-compositing on` | `0def67a51677aa1394307aa974fcb3fd` (`ON_MD5`) |
-| Earlier look (before 0.4.0), command at the end | `a106801a97a05ee7d5033e2b8d647f11` (`G1_MD5_OLD`) |
-| Earlier look + `--occlusion-compositing on` | `6cebff5403f7f0fdcda109cb8bbff35a` (`ON_MD5_OLD`) |
+| Tensor 35 (`summicron/_artifacts/psf_lens35_us3006249_fu0.4.npz`) | `894f858c54e0cad45eedcddab47be6d7` (`TENSOR_MD5`) |
+| Tensor 50 (`summicron/_artifacts/psf_lens50_doublegauss_fu0.4.npz`) | `10824ae374e7ab57e651d3d770a76b6a` (`TENSOR_MD5_50`) |
+| Default look, 35 mm f/2, command below | `a15314d23dfe09070667a15f66a362d9` (`G1_MD5`) |
+| Default look + `--occlusion-compositing on` | `3659beff1f331b6d041ca50d90421718` (`ON_MD5`) |
+| Default look + `--lens 50` (50 mm f/2) | `b2eebd9d0605cb1a1e1e617b12f41d0a` (`LENS50_MD5`) |
 
 The constants live in `summicron/render/_bench.py`; this table mirrors them. In Python the same render is
 `RenderOptions.canonical_bench(image_path, focus_xy)` from `summicron.render.api`.
 
 ## Primary canonical bench
 
-Flags after `--image` and before `--focus-xy` are `CANONICAL_FLAGS`. There is no `--tensor`: the renderer uses
-the tensor shipped in the wheel.
+Flags after `--image` and before `--focus-xy` are `CANONICAL_FLAGS`. There is no `--tensor` and no `--lens`: the
+renderer uses the default 35 mm tensor shipped in the wheel.
 
 ```bash
 python -m summicron.render.convolve \
   --image iphoneImage/IMG_6915.HEIC \
-  --depth-source lidar --downres 2048 --psf-norm l1 --hdr-source macos \
+  --depth-source lidar --downres 2048 --hdr-source macos \
   --focus-xy 0.40 0.45 \
   --output runs/vibe_bench/IMG_6915_bench.jpg
 ```
@@ -40,25 +40,24 @@ The default look comes from the `auto` defaults: with LiDAR depth the depth is r
 mapped through a reciprocal (diopter) curve, and with HDR headroom the tone follows the input photo's own SDR
 tone (`--tonemap input-lut`). The `Resolved:` line on stdout shows what ran.
 
-## Occlusion compositing variant
+## Variants
+
+The 50 mm f/2 lens:
 
 ```bash
 python -m summicron.render.convolve \
   --image iphoneImage/IMG_6915.HEIC \
-  --depth-source lidar --downres 2048 --psf-norm l1 --hdr-source macos \
-  --focus-xy 0.40 0.45 --occlusion-compositing on \
-  --output runs/vibe_bench/IMG_6915_bench_on.jpg
+  --depth-source lidar --downres 2048 --hdr-source macos --lens 50 \
+  --focus-xy 0.40 0.45 \
+  --output runs/vibe_bench/IMG_6915_bench_lens50.jpg
 ```
 
-## Earlier look
-
-The look before 0.4.0 stays reachable with explicit flags (`CANONICAL_FLAGS_OLD`):
+Occlusion compositing on (about 1.3 to 1.6 times the render time):
 
 ```bash
 python -m summicron.render.convolve \
   --image iphoneImage/IMG_6915.HEIC \
-  --depth-source lidar --depth-scale 10 --downres 2048 --psf-norm l1 --hdr-source macos \
-  --depth-guided off --depth-mapping linear --tonemap ci --bright-pass-thresh 1.0 \
-  --focus-xy 0.40 0.45 \
-  --output runs/vibe_bench/IMG_6915_bench_old.jpg
+  --depth-source lidar --downres 2048 --hdr-source macos \
+  --focus-xy 0.40 0.45 --occlusion-compositing on \
+  --output runs/vibe_bench/IMG_6915_bench_on.jpg
 ```

@@ -14,7 +14,9 @@ _spec = importlib.util.spec_from_file_location("s16_metrics", _P)
 M = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(M)
 
-EXPECT_R90 = [0.7, 3.8, 5.1, 6.1, 6.7, 7.1, 7.5, 7.7, 7.9, 7.9, 7.9]
+# Re-pinned in 0.5.0 on the shipped 35 mm optiland tensor (the old vector was the removed
+# legacy tensor's, a different and ~2x smaller blur); measured with M.r90_vector, 2-dp rounding.
+EXPECT_R90 = [0.71, 4.84, 7.89, 10.16, 11.85, 13.06, 13.96, 14.56, 14.92, 15.4, 15.57]
 BRIGHT_LINE = (
     "  bright-pass: thresh=1, region_size=15, floor=0.050, norm_pct=99.50, "
     "bright_pixels_pct=12.173%, bright_energy_ratio=4.0560"

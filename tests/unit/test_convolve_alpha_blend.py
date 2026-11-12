@@ -29,7 +29,7 @@ def test_alpha_blend_dmap_zero_identity():
     """dmap=0 → α=1 → output_linear bit-identical to img_lin."""
     img = _image()
     dmap = np.zeros(img.shape[:2], dtype=np.float32)
-    _, out = render_with_defocus(img, _blur_tensor(), dmap=dmap, psf_norm="l1")
+    _, out = render_with_defocus(img, _blur_tensor(), dmap=dmap)
     assert np.max(np.abs(out - srgb_to_linear(img))) < 1e-6
 
 
@@ -38,9 +38,9 @@ def test_alpha_blend_dmap_saturated_matches_preblend(monkeypatch):
     img = _image(seed=1)
     t = _blur_tensor()
     dmap = np.full(img.shape[:2], 1.0, dtype=np.float32)
-    _, blended = render_with_defocus(img, t, dmap=dmap, psf_norm="l1")
+    _, blended = render_with_defocus(img, t, dmap=dmap)
     monkeypatch.setattr(convolve, "D_KNEE_LAYERED", 1e-9)
-    _, noblend = render_with_defocus(img, t, dmap=dmap, psf_norm="l1")
+    _, noblend = render_with_defocus(img, t, dmap=dmap)
     assert np.allclose(blended, noblend, atol=1e-6)
     assert np.max(np.abs(blended - srgb_to_linear(img))) > 1e-3
 

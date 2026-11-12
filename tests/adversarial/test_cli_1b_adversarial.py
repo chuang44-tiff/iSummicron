@@ -83,7 +83,6 @@ def test_slab_batch_size_inf_raises_valueerror():
         {"hdr_source": "Macos"}, {"hdr_source": "MACOS"}, {"hdr_source": "None"},
         {"hdr_source": None},
         {"depth_source": "LiDAR"}, {"depth_source": ""},
-        {"psf_norm": "L1"}, {"psf_norm": "peak "},
         {"shadow_match_mode": "ON", "hdr_source": "macos"},
         {"shadow_match_mode": False},
     ],
@@ -104,7 +103,7 @@ def test_valid_boundaries_accepted():
         {"shadow_match_strength": 0.0}, {"shadow_match_strength": 4.0},
         {"slab_batch_size": 1}, {"slab_batch_size": None},
         {"shadow_match_mode": "on", "hdr_source": "macos"},
-        {"depth_source": "monocular", "psf_norm": "peak"},
+        {"depth_source": "monocular"},
     ]:
         _ro(**kw)  # must not raise
 
@@ -415,12 +414,11 @@ def _list_files(root: Path) -> list[Path]:
 
 def test_save_false_writes_nothing(fake_pipeline, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    tensor_stub = tmp_path / "t.npz"  # never read (load_tensor patched)
     for extra in ({}, {"out_path": tmp_path / "o" / "x.jpg"},
                   {"out_dir": tmp_path / "od"}):
         res = render_image(
             RenderOptions(image_path=tmp_path / "img.heic",
-                          tensor_path=tensor_stub, save=False, **extra),
+                          save=False, **extra),
             on_progress=lambda m: None,
         )
         assert res.output_path is None
@@ -434,7 +432,7 @@ def test_default_out_dir_resolves_under_cwd(fake_pipeline, tmp_path,
     monkeypatch.chdir(tmp_path)
     render_image(
         RenderOptions(image_path=tmp_path / "img.heic",
-                      tensor_path=tmp_path / "t.npz"),
+                      ),
         on_progress=lambda m: None,
     )
     files = _list_files(tmp_path)
@@ -446,7 +444,7 @@ def test_default_out_dir_resolves_under_cwd(fake_pipeline, tmp_path,
 def test_diagnostics_center_ssim_none_without_focus(fake_pipeline, tmp_path):
     res = render_image(
         RenderOptions(image_path=tmp_path / "img.heic",
-                      tensor_path=tmp_path / "t.npz", save=False),
+                      save=False),
         on_progress=lambda m: None,
     )
     d = res.diagnostics
@@ -460,7 +458,7 @@ def test_out_dir_save_reports_output_path(fake_pipeline, tmp_path,
     monkeypatch.chdir(tmp_path)
     res = render_image(
         RenderOptions(image_path=tmp_path / "img.heic",
-                      tensor_path=tmp_path / "t.npz"),
+                      ),
         on_progress=lambda m: None,
     )
     assert res.output_path is not None and res.output_path.is_file()

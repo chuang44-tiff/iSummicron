@@ -20,13 +20,15 @@ def test_default_tensor_path_resolves_to_existing_file():
     p = default_tensor_path()
     assert isinstance(p, Path)
     assert p.is_file(), f"missing canonical tensor at {p}"
-    assert p.name == "codev_render_v1.npz"
+    assert p.name == "psf_lens35_us3006249_fu0.4.npz"
+    assert default_tensor_path("50").name == "psf_lens50_doublegauss_fu0.4.npz"
 
 
-def test_default_tensor_loads_as_R12_D11():
-    """Round-trip through load_tensor: the shipped artifact is the canonical
-    R=12, D=11 CodeV tensor."""
-    t = load_tensor(default_tensor_path())
+@pytest.mark.parametrize("lens", ["35", "50"])
+def test_default_tensor_loads_as_R12_D11(lens):
+    """Round-trip through load_tensor: each shipped artifact is a
+    R=12, D=11 ray-traced tensor."""
+    t = load_tensor(default_tensor_path(lens))
     assert t["R"] == 12
     assert t["D"] == 11
     assert t["delta_guard_applied"] is True

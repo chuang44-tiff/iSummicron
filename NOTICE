@@ -5,11 +5,24 @@ This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
 PSF tensor provenance
 ---------------------
-The file summicron/_artifacts/codev_render_v1.npz is a table of point spread
-functions simulated with CODE V from the sample design "ag_dblgauss" (a generic
-double-Gauss of about 100 mm focal length at f/2). It contains no measured
-Leica data. It is distributed under the Apache License, Version 2.0, together
-with the rest of this repository.
+The two files in summicron/_artifacts/ are tables of point spread functions
+ray-traced with optiland (PyPI package `optiland`, MIT licence).
+
+* psf_lens35_us3006249_fu0.4.npz is traced from the prescription in
+  US 3,006,249, Example II (a United States patent; inventor W. Mandler,
+  assignee Ernst Leitz Canada; filed 1958; expired, public domain), scaled to
+  a 35 mm focal length at f/2.
+* psf_lens50_doublegauss_fu0.4.npz is traced from the 50 mm f/2 double-Gauss
+  sample prescription that ships with optiland.
+
+optiland is Copyright (c) 2024 Kramer Harrison and is distributed under the
+MIT License. The 50 mm sample prescription is taken from optiland and remains
+under that licence; the tensor built from it is distributed under the Apache
+License, Version 2.0 together with the rest of this repository.
+
+These are ray-traced design prescriptions, not measurements of any production
+lens. The build is reproducible with scripts/build_psf/ and
+environment-optiland.yml.
 
 Third-party model weights
 -------------------------
@@ -19,4 +32,4 @@ not redistributed in this repository or in the wheel.
 
 Trademarks
 ----------
-Summicron and Leica are trademarks of Leica Camera AG. iSummicron is not affiliated with, sponsored by, or endorsed by Leica Camera AG. The shipped PSF is a simulated generic double-Gauss used as a proxy, not a measurement of any Leica lens.
+Summicron and Leica are trademarks of Leica Camera AG. iSummicron is not affiliated with, sponsored by, or endorsed by Leica Camera AG. The shipped PSFs are ray-traced design prescriptions, not measurements of any Leica lens.

@@ -250,7 +250,7 @@ def test_renderoptions_defaults_match_parser_defaults():
     assert a == b
 
 
-def test_canonical_bench_argv_has_no_old_look_leakage():
+def test_canonical_bench_argv_has_no_depth_scale_leakage():
     assert "--depth-scale" not in _bench.CANONICAL_FLAGS
     for f in ("--depth-guided", "--depth-mapping", "--tonemap", "--bright-pass-thresh"):
         assert f not in _bench.CANONICAL_FLAGS
@@ -259,13 +259,11 @@ def test_canonical_bench_argv_has_no_old_look_leakage():
         "auto", "auto", "auto", None)
 
 
-@pytest.mark.parametrize("old", [False, True])
 @pytest.mark.parametrize("kw,ok", [
     (dict(depth_source="monocular"), None),
     (dict(hdr_source="none"), None),
     (dict(shadow_match_mode="on"), None),
     (dict(occlusion_compositing="on"), True),
-    (dict(psf_norm="peak"), True),
     (dict(downres=None), True),
     (dict(downres=0), False),
     (dict(depth_source="monocular", depth_mapping="diopter"), False),
@@ -276,18 +274,18 @@ def test_canonical_bench_argv_has_no_old_look_leakage():
     (dict(depth_gain=2.0, depth_mapping="linear"), False),
     (dict(hdr_source="none", shadow_match_mode="on"), False),
 ])
-def test_canonical_bench_overrides_are_revalidated(old, kw, ok):
+def test_canonical_bench_overrides_are_revalidated(kw, ok):
     if ok is None:  # depends on look: just must not crash with a non-ValueError
         try:
-            RenderOptions.canonical_bench("x.heic", (0.4, 0.45), old_look=old, **kw)
+            RenderOptions.canonical_bench("x.heic", (0.4, 0.45), **kw)
         except ValueError:
             pass
         return
     if ok:
-        RenderOptions.canonical_bench("x.heic", (0.4, 0.45), old_look=old, **kw)
+        RenderOptions.canonical_bench("x.heic", (0.4, 0.45), **kw)
     else:
         with pytest.raises(ValueError):
-            RenderOptions.canonical_bench("x.heic", (0.4, 0.45), old_look=old, **kw)
+            RenderOptions.canonical_bench("x.heic", (0.4, 0.45), **kw)
 
 
 def test_canonical_bench_new_look_monocular_override_is_valid_auto_normalised():
@@ -372,7 +370,7 @@ def test_resolved_dict_is_all_str_and_has_fixed_keys(tmp_path):
     r = dict(res.diagnostics.resolved)
     assert set(r) == {"hdr_source", "depth_source", "depth_guided", "depth_mapping",
                       "tonemap", "bright_pass_thresh",
-                      "kernel_family", "bright_stamp"}  # S22 S1 (codev default)
+                      "lens", "bright_stamp", "bright_stamp_gain"}  # 0.5.0: l1 stamp default
     assert all(isinstance(v, str) for v in r.values())
     float(r["bright_pass_thresh"])
 

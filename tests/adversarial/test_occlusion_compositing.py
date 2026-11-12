@@ -92,10 +92,10 @@ class TestG1OffBitIdentity:
         depth = _tilted_depth(*img.shape[:2])
         tensor = _synthetic_tensor_d11()
         base_u8, base_lin = render(
-            img, tensor, depth_m=depth.copy(), psf_norm="l1",
+            img, tensor, depth_m=depth.copy(),
         )
         off_u8, off_lin = render(
-            img, tensor, depth_m=depth.copy(), psf_norm="l1",
+            img, tensor, depth_m=depth.copy(),
             occlusion_compositing="off",
         )
         assert np.array_equal(base_u8, off_u8)
@@ -107,7 +107,7 @@ class TestG1OffBitIdentity:
         tensor = _synthetic_tensor_d11()
         with pytest.raises(ValueError, match="occlusion_compositing"):
             render(
-                img, tensor, depth_m=depth, psf_norm="l1",
+                img, tensor, depth_m=depth,
                 occlusion_compositing="bogus",
             )
 
@@ -135,9 +135,9 @@ class TestGRampSmoothPlane:
         h, w = img.shape[:2]
         depth = _tilted_depth(h, w, lo=1.0, hi=18.0)
         tensor = _synthetic_tensor_d11()
-        off_u8, _ = render(img, tensor, depth_m=depth.copy(), psf_norm="l1")
+        off_u8, _ = render(img, tensor, depth_m=depth.copy())
         on_u8, _ = render(
-            img, tensor, depth_m=depth.copy(), psf_norm="l1",
+            img, tensor, depth_m=depth.copy(),
             occlusion_compositing="on",
         )
         # Mean abs uint8 diff small (no banding); allow a thin selector tail.
@@ -181,7 +181,7 @@ class TestGSeamDepthStep:
         depth = _step_depth(h, w, near=1.0, far=15.0)
         tensor = _synthetic_tensor_d11()
         on_u8, _ = render(
-            img, tensor, depth_m=depth.copy(), psf_norm="l1",
+            img, tensor, depth_m=depth.copy(),
             occlusion_compositing="on",
         )
         # Sample a column well inside the near (bright, in-focus) side, away
@@ -229,9 +229,9 @@ class TestRegimeAEqualsOFF:
         depth = _realistic_depth(h, w)
         tensor = _synthetic_tensor_d11()
 
-        off_u8, off_lin = render(img, tensor, depth_m=depth.copy(), psf_norm="l1")
+        off_u8, off_lin = render(img, tensor, depth_m=depth.copy())
         on_u8, on_lin = render(
-            img, tensor, depth_m=depth.copy(), psf_norm="l1",
+            img, tensor, depth_m=depth.copy(),
             occlusion_compositing="on",
         )
 
@@ -275,9 +275,9 @@ class TestRegimeAEqualsOFF:
         h, w = img.shape[:2]
         depth = _tilted_depth(h, w, lo=3.0, hi=18.0)  # smooth, no step
         tensor = _synthetic_tensor_d11()
-        off_u8, off_lin = render(img, tensor, depth_m=depth.copy(), psf_norm="l1")
+        off_u8, off_lin = render(img, tensor, depth_m=depth.copy())
         on_u8, on_lin = render(
-            img, tensor, depth_m=depth.copy(), psf_norm="l1",
+            img, tensor, depth_m=depth.copy(),
             occlusion_compositing="on",
         )
         assert np.allclose(on_lin, off_lin, atol=1e-5), (
@@ -319,7 +319,7 @@ class TestNearZeroAlphaStability:
         depth = _step_depth(h, w, near=0.8, far=12.0)
         tensor = _synthetic_tensor_d11()
         on_u8, on_lin = render(
-            img, tensor, depth_m=depth.copy(), psf_norm="l1",
+            img, tensor, depth_m=depth.copy(),
             occlusion_compositing="on",
         )
         assert np.isfinite(on_lin).all()
@@ -347,9 +347,9 @@ class TestDiffuseOverEnergyBound:
         depth = np.full((h, w), 18.0, np.float32)          # far bg
         depth[h // 3:2 * h // 3, w // 3:2 * w // 3] = 0.7   # near block
         tensor = _synthetic_tensor_d11()
-        off_u8, off_lin = render(img, tensor, depth_m=depth.copy(), psf_norm="l1")
+        off_u8, off_lin = render(img, tensor, depth_m=depth.copy())
         on_u8, on_lin = render(
-            img, tensor, depth_m=depth.copy(), psf_norm="l1",
+            img, tensor, depth_m=depth.copy(),
             occlusion_compositing="on",
         )
         in_max = float(img.max())
@@ -376,9 +376,9 @@ class TestDiffuseOverEnergyBound:
         depth = np.full((h, w), 15.0, np.float32)
         depth[:, w // 2 - 1:w // 2 + 1] = 0.7
         tensor = _synthetic_tensor_d11()
-        _, off_lin = render(img, tensor, depth_m=depth.copy(), psf_norm="l1")
+        _, off_lin = render(img, tensor, depth_m=depth.copy())
         _, on_lin = render(
-            img, tensor, depth_m=depth.copy(), psf_norm="l1",
+            img, tensor, depth_m=depth.copy(),
             occlusion_compositing="on",
         )
         assert np.isfinite(on_lin).all()

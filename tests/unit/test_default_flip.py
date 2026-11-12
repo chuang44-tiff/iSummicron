@@ -101,19 +101,13 @@ def test_field_and_cli_defaults():
         assert getattr(c, k) == v, k
 
 
-def test_canonical_bench_new_and_old():
+def test_canonical_bench_new():
     from summicron.render import _bench
     n = RenderOptions.canonical_bench("a.heic", (0.4, 0.45))
     assert (n.depth_source, n.depth_guided, n.depth_mapping, n.tonemap,
             n.depth_scale, n.hdr_source, n.downres) == (
         "lidar", "auto", "auto", "auto", 1.0, "macos", 2048)
     assert "--depth-scale" not in _bench.CANONICAL_FLAGS
-    o = RenderOptions.canonical_bench("a.heic", (0.4, 0.45), old_look=True)
-    assert (o.depth_source, o.depth_guided, o.depth_mapping, o.tonemap,
-            o.bright_pass_thresh, o.depth_scale) == (
-        "lidar", "off", "linear", "ci", 1.0, 10.0)
-    n_old = len(_bench.OLD_LOOK_FLAGS)
-    assert _bench.CANONICAL_FLAGS_OLD[-n_old:] == _bench.OLD_LOOK_FLAGS
 
 
 def test_argparse_choices_include_auto():

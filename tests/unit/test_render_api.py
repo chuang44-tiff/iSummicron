@@ -49,7 +49,6 @@ def test_render_image_ldr_downres256_returns_populated_result(tmp_path):
         focus_xy=(0.40, 0.45),
         depth_scale=10.0,
         downres=256,
-        psf_norm="l1",
         hdr_source="none",
     )
     result = render_image(opts)
@@ -83,7 +82,6 @@ def test_render_image_hdr_populates_linear_buffer(tmp_path):
         focus_xy=(0.40, 0.45),
         depth_scale=10.0,
         downres=256,
-        psf_norm="l1",
         hdr_source="macos",
     )
     result = render_image(opts)
@@ -103,7 +101,6 @@ def test_render_options_from_argparse_round_trip():
         "--focus-xy", "0.4", "0.45",
         "--depth-scale", "10",
         "--downres", "2048",
-        "--psf-norm", "l1",
         "--hdr-source", "macos",
         "--shadow-match-mode", "on",
         "--shadow-band-hi", "0.6",
@@ -117,7 +114,6 @@ def test_render_options_from_argparse_round_trip():
     assert opts.focus_xy == (0.4, 0.45)
     assert opts.depth_scale == 10.0
     assert opts.downres == 2048
-    assert opts.psf_norm == "l1"
     assert opts.hdr_source == "macos"
     assert opts.shadow_match_mode == "on"
     assert opts.shadow_band_hi == pytest.approx(0.6)
@@ -133,7 +129,6 @@ def test_render_options_defaults_are_locked_per_spec():
     assert opts.focus_xy is None
     assert opts.depth_scale == 1.0
     assert opts.downres is None
-    assert opts.psf_norm == "l1"
     assert opts.hdr_source == "auto"  # Rev 3
     assert opts.bright_pass_region_size == 31
     assert opts.bright_pass_floor == pytest.approx(0.10)
@@ -149,7 +144,7 @@ def test_render_options_is_frozen():
     """RenderOptions / RenderResult are frozen dataclasses (immutable)."""
     opts = RenderOptions(image_path=Path("dummy.heic"))
     with pytest.raises((AttributeError, TypeError)):
-        opts.psf_norm = "peak"  # type: ignore[misc]
+        opts.lens = "50"  # type: ignore[misc]
 
 
 def test_cancelled_error_is_an_exception_subclass():

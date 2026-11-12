@@ -134,22 +134,3 @@ def test_step_geometry_and_identity_confinement():
     assert geom[0].any() and geom[2][:, 30].all() and geom[3][:, 0].all()
     r = M.staircase_confinement(d, d.copy(), geom)
     assert r["changed_frac"] == 0.0 and r["p99_far"] == 0.0
-
-
-# ---- slow: real render ----------------------------------------------------
-@pytest.mark.slow
-@needs_img
-def test_baseline_arm_jpg_matches_pin(tmp_path):
-    from summicron.render._bench import G1_MD5_OLD
-
-    rc = probe.main(["--image", str(IMG), "--focus-xy", *FOCUS, "--arm", "baseline",
-                     "--out-dir", str(tmp_path)])
-    assert rc == 0
-    jpg = tmp_path / "IMG_6915_baseline_off.jpg"
-    png = tmp_path / "IMG_6915_baseline_off.png"
-    assert hashlib.md5(jpg.read_bytes()).hexdigest() == G1_MD5_OLD
-    assert hashlib.md5(png.read_bytes()).hexdigest() != G1_MD5_OLD
-    # the P1 depth equals the dry-run depth (dry-run numbers are render-path numbers)
-    dd = tmp_path / "dry"
-    _dry(dd, "--arm", "baseline")
-    assert np.array_equal(np.load(jpg.with_suffix(".depth.npy")), np.load(dd / "IMG_6915_baseline_off.depth.npy"))

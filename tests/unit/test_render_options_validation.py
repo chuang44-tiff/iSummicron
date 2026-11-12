@@ -45,7 +45,6 @@ def test_invalid_raises_exact_message(kw, msg):
     "kw",
     [
         {"depth_source": "bogus"},
-        {"psf_norm": "bogus"},
         {"hdr_source": "bogus"},
         {"shadow_match_mode": "bogus"},
     ],

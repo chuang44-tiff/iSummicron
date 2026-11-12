@@ -27,6 +27,30 @@ A value that is not a positive integer is rejected up front:
 ISUMMICRON_MAX_BYTES must be an integer > 0 (bytes); got …
 ```
 
+## A flag was removed in 0.5.0
+
+```text
+render: … was removed in 0.5.0; …. See 'Migrating to 0.5.0' in CHANGELOG.md.
+```
+
+The message starts with the flag: `--kernel-family`, `--lens-aperture-mm` or `--psf-norm`. For the first two the reason reads "the only PSF source is the ray-traced lens tensor (use --lens 35|50 or --tensor PATH)"; for `--psf-norm` it reads "PSFs are always L1-normalised". Fix: remove the flag. Choose the lens with `--lens 35` (the default) or `--lens 50`.
+
+## Tensor not found
+
+```text
+tensor not found: … (bundled tensors changed in 0.5.0; see 'Migrating to 0.5.0' in CHANGELOG.md)
+```
+
+The `--tensor` path does not exist. The PSF table bundled with earlier versions is gone, so a path that pointed at it fails this way. Fix: drop `--tensor` to use the bundled lenses, or pass a tensor you built.
+
+## Lens and tensor together
+
+```text
+--lens and --tensor are mutually exclusive
+```
+
+Fix: pass one of them. `--lens` picks a bundled lens; `--tensor` uses your own file.
+
 ## Image too large
 
 ```text

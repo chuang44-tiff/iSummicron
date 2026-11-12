@@ -4,7 +4,7 @@ locked-spec-mem.md rev 2).
 Targets: the ``_memory_guard`` / ``MemoryBudgetError`` contract (env edge
 cases, suggestion re-plug, render()/CLI wiring), the structural estimator
 PER PHASE against tracemalloc on shapes outside the coder's grid (D=1, D=22,
-batch=D, odd / thin / tiny sizes, psf_norm=peak, bright pass active, Nr=24,
+batch=D, odd / thin / tiny sizes, bright pass active, Nr=24,
 k > image/2), the slab-batch default, and the HDR-loader buffer lifetime.
 All renders are small synthetics; the only HEIC touches are a decode + LiDAR
 read at --downres 256 (no native render).
@@ -204,7 +204,7 @@ def test_render_guard_wiring_and_exact_boundary(monkeypatch, occ, batch):
 # (2) estimator PER PHASE vs tracemalloc (outside the coder's 36-row grid)
 # ---------------------------------------------------------------------------
 
-def _phase_measure(h, w, d, occ, batch, k=31, nr=12, psf_norm="l1", hdr=False):
+def _phase_measure(h, w, d, occ, batch, k=31, nr=12, hdr=False):
     img, depth = _scene(h, w, d, hdr=hdr)
     tensor = _tensor(d, k=k, n_r=nr)
     orig = cv._layered_gather_diffuse
@@ -226,7 +226,7 @@ def _phase_measure(h, w, d, occ, batch, k=31, nr=12, psf_norm="l1", hdr=False):
             tracemalloc.reset_peak()
             rec["b"] = tracemalloc.get_traced_memory()[0]
             cv.render(img, tensor, depth_m=depth, hdr_source="macos",
-                      psf_norm=psf_norm, bright_thresh=1.0 if hdr else 1e9,
+                      bright_thresh=1.0 if hdr else 1e9,
                       occlusion_compositing="on" if occ else "off",
                       slab_batch_size=batch)
             rec["post"] = tracemalloc.get_traced_memory()[1] - rec["b"]
@@ -248,27 +248,27 @@ def _warm():
 
 
 _PHASE_CASES = [
-    # h, w, d, occ, batch, k, nr, psf_norm, hdr
-    (256, 192, 1, True, 1, 31, 12, "l1", False),
-    (256, 192, 22, True, 1, 31, 12, "l1", False),
-    (256, 192, 22, True, 22, 31, 12, "l1", False),
-    (192, 256, 2, True, 2, 31, 12, "l1", False),
-    (97, 131, 11, True, 1, 31, 12, "l1", False),
-    (48, 300, 11, True, 1, 31, 12, "l1", False),
-    (300, 48, 11, False, 4, 31, 12, "l1", False),
-    (64, 48, 11, True, 1, 65, 12, "l1", False),
-    (256, 192, 11, True, 11, 31, 12, "peak", True),
-    (256, 192, 11, True, 1, 31, 12, "l1", True),
-    (256, 192, 11, False, 1, 31, 24, "l1", False),
-    (384, 512, 11, True, 1, 31, 12, "l1", True),
+    # h, w, d, occ, batch, k, nr, hdr
+    (256, 192, 1, True, 1, 31, 12, False),
+    (256, 192, 22, True, 1, 31, 12, False),
+    (256, 192, 22, True, 22, 31, 12, False),
+    (192, 256, 2, True, 2, 31, 12, False),
+    (97, 131, 11, True, 1, 31, 12, False),
+    (48, 300, 11, True, 1, 31, 12, False),
+    (300, 48, 11, False, 4, 31, 12, False),
+    (64, 48, 11, True, 1, 65, 12, False),
+    (256, 192, 11, True, 11, 31, 12, True),
+    (256, 192, 11, True, 1, 31, 12, True),
+    (256, 192, 11, False, 1, 31, 24, False),
+    (384, 512, 11, True, 1, 31, 12, True),
 ]
 
 
-@pytest.mark.parametrize("h, w, d, occ, batch, k, nr, psf_norm, hdr", _PHASE_CASES)
-def test_estimator_never_under_per_phase(_warm, h, w, d, occ, batch, k, nr, psf_norm, hdr):
-    rec, est = _phase_measure(h, w, d, occ, batch, k=k, nr=nr, psf_norm=psf_norm, hdr=hdr)
+@pytest.mark.parametrize("h, w, d, occ, batch, k, nr, hdr", _PHASE_CASES)
+def test_estimator_never_under_per_phase(_warm, h, w, d, occ, batch, k, nr, hdr):
+    rec, est = _phase_measure(h, w, d, occ, batch, k=k, nr=nr, hdr=hdr)
     slack = 256 * 1024
-    tag = f"{h}x{w} D={d} b={batch} occ={occ} k={k} nr={nr} {psf_norm} hdr={hdr}"
+    tag = f"{h}x{w} D={d} b={batch} occ={occ} k={k} nr={nr} hdr={hdr}"
     assert est["prep"] + slack >= rec["prep"], f"prep under: {tag} {rec} {est}"
     assert est["gather"] + slack >= rec["gather"], f"gather under: {tag} {rec} {est}"
     post_est = max(est["over"], est["gather"])  # render tail is in ``gather``

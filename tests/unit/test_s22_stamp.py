@@ -56,7 +56,7 @@ def _run(kernel, gain, hoisted, seed=3):
     )
     kw = {} if gain is None else {"bright_stamp_gain": gain}
     cv._apply_kernel(
-        kernel, w, img, img, img, wedge, pad, H, W, "l1",
+        kernel, w, img, img, img, wedge, pad, H, W,
         out, outb, ws, dws, fft_state=fft_state, **kw,
     )
     return out, outb, img, pad, H, W
@@ -94,7 +94,7 @@ class TestApplyKernelStamp:
         pad, img, outs, w, wedge, H, W = _setup(k.shape[0])
         out, outb, ws, dws = outs()
         fs = cv._build_image_fft_state(img, img, img, k.shape[0]) if hoisted else None
-        cv._apply_kernel(k, w, img, img, img, wedge, pad, H, W, "l1",
+        cv._apply_kernel(k, w, img, img, img, wedge, pad, H, W,
                          out, outb, ws, dws, fft_state=fs, bright_stamp_gain=None)
         assert np.array_equal(a, outb)
 
@@ -106,10 +106,6 @@ class TestRenderGainValidation:
         depth = np.full((16, 16), 0.7, np.float32)
         return img, t, depth
 
-    def test_peak_with_gain_raises(self):
-        img, t, depth = self._args()
-        with pytest.raises(ValueError, match="bright_stamp_gain"):
-            cv.render(img, t, depth_m=depth, psf_norm="peak", bright_stamp_gain=2.0)
 
     @pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("inf"), True, "2"])
     def test_bad_gain_raises(self, bad):

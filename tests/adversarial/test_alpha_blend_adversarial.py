@@ -55,8 +55,7 @@ class TestAlphaBlendHDRHeadroom:
         """α=1 (dmap=0): output == img_lin; HDR values > 1.0 pass through."""
         img = np.full((64, 64, 3), 3.0, dtype=np.float32)
         dmap = np.zeros((64, 64), dtype=np.float32)
-        _, out_lin = render_with_defocus(img, _blur_tensor(), dmap=dmap,
-                            psf_norm="l1", hdr_source="macos")
+        _, out_lin = render_with_defocus(img, _blur_tensor(), dmap=dmap, hdr_source="macos")
         assert out_lin.max() > 2.99, (
             f"HDR α=1 clamped: out.max={out_lin.max()} (expect ≈3.0)"
         )
@@ -68,8 +67,7 @@ class TestAlphaBlendHDRHeadroom:
         img = np.full((64, 64, 3), 5.0, dtype=np.float32)
         # dmap where α ≈ 0.5: cos²(π/2 · x) = 0.5 → x = 0.5 → d = 0.5·D_KNEE_LAYERED
         dmap = np.full((64, 64), 0.5 * D_KNEE_LAYERED, dtype=np.float32)
-        _, out_lin = render_with_defocus(img, _blur_tensor(), dmap=dmap,
-                            psf_norm="l1", hdr_source="macos")
+        _, out_lin = render_with_defocus(img, _blur_tensor(), dmap=dmap, hdr_source="macos")
         assert out_lin.max() > 4.5, f"HDR mid-blend clamped: {out_lin.max()}"
 
 
@@ -84,7 +82,7 @@ class TestAlphaBlendDmapDtype:
         """int32 dmap of zeros → α=1 → output bit-identical to linearized input."""
         img = _image(seed=0)
         dmap = np.zeros((64, 64), dtype=np.int32)
-        _, out_lin = render_with_defocus(img, _blur_tensor(), dmap=dmap, psf_norm="l1")
+        _, out_lin = render_with_defocus(img, _blur_tensor(), dmap=dmap)
         assert out_lin.dtype == np.float32
         assert np.max(np.abs(out_lin - srgb_to_linear(img))) < 1e-6
 
@@ -92,7 +90,7 @@ class TestAlphaBlendDmapDtype:
         """Passing float64 dmap must not silently upcast output."""
         img = _image(seed=1)
         dmap = np.full((64, 64), 0.2, dtype=np.float64)
-        _, out_lin = render_with_defocus(img, _blur_tensor(), dmap=dmap, psf_norm="l1")
+        _, out_lin = render_with_defocus(img, _blur_tensor(), dmap=dmap)
         assert out_lin.dtype == np.float32
 
 
@@ -118,7 +116,7 @@ class TestAlphaBlendDKneeEdges:
         monkeypatch.setattr(cv, "D_KNEE_LAYERED", 1e-9)
         img = _image(seed=3)
         dmap = np.full((64, 64), 0.5, dtype=np.float32)
-        _, out_lin = render_with_defocus(img, _blur_tensor(), dmap=dmap, psf_norm="l1")
+        _, out_lin = render_with_defocus(img, _blur_tensor(), dmap=dmap)
         # No NaN propagation; output is floating and finite
         assert np.all(np.isfinite(out_lin))
         # And non-trivially different from img_lin (i.e. actual convolve won)
@@ -143,7 +141,7 @@ class TestAlphaBlendDKneeWide:
         monkeypatch.setattr(cv, "D_KNEE_LAYERED", 1.5)
         img = _image(seed=4)
         dmap = np.full((64, 64), 1.0, dtype=np.float32)
-        _, out_lin = render_with_defocus(img, _blur_tensor(), dmap=dmap, psf_norm="l1")
+        _, out_lin = render_with_defocus(img, _blur_tensor(), dmap=dmap)
         # Pre-blend convolved ~ similar magnitude to img_lin; blended with α≈0.25
         # means ≥20% of img_lin signature leaks into "fully-defocused" pixels.
         expected_alpha = np.cos(0.5 * np.pi * min(1.0 / 1.5, 1.0)) ** 2
@@ -167,30 +165,10 @@ class TestAlphaBlendEnergyConservation:
         img = np.full((64, 64, 3), 0.5, dtype=np.float32)  # flat image
         # α ≈ 0.5 at d = 0.5·D_KNEE_LAYERED
         dmap = np.full((64, 64), 0.5 * D_KNEE_LAYERED, dtype=np.float32)
-        _, out_lin = render_with_defocus(img, _blur_tensor(), dmap=dmap, psf_norm="l1")
+        _, out_lin = render_with_defocus(img, _blur_tensor(), dmap=dmap)
         ratio = out_lin.sum() / srgb_to_linear(img).sum()
         assert 0.85 <= ratio <= 1.15, (
             f"post-blend energy ratio {ratio:.4f} outside [0.85, 1.15]"
-        )
-
-
-# --------------------------------------------------------------------------- #
-# V11 — Placement: blend is AFTER peak-mode auto-exposure divide               #
-# --------------------------------------------------------------------------- #
-
-class TestAlphaBlendPlacement:
-    """Structural: blend must run AFTER the ``psf_norm=='peak'`` renorm so L1
-    and peak modes see the same blend math. See locked-spec item 3."""
-
-    def test_blend_source_after_peak_divide(self):
-        import inspect
-        src = inspect.getsource(render)
-        # Peak divide: ``if psf_norm == "peak":`` … ``output = output / omax``
-        peak_idx = src.index('if psf_norm == "peak"')
-        # Blend: ``alpha = (np.cos`` (first occurrence is the blend line)
-        blend_idx = src.index("alpha = (np.cos")
-        assert peak_idx < blend_idx, (
-            "α-blend must come AFTER peak-mode auto-exposure divide"
         )
 
 
@@ -205,7 +183,7 @@ class TestAlphaBlendLogging:
     def test_alpha_log_format_stable(self, capsys):
         img = _image(seed=5)
         dmap = np.full((64, 64), 0.2, dtype=np.float32)
-        render_with_defocus(img, _blur_tensor(), dmap=dmap, psf_norm="l1")
+        render_with_defocus(img, _blur_tensor(), dmap=dmap)
         out = capsys.readouterr().out
         assert re.search(r"α-blend: D_KNEE_LAYERED=[\d.]+, alpha_mean=[\d.]+", out), (
             f"α-blend log format drifted; captured stdout:\n{out}"

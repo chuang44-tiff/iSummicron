@@ -7,18 +7,16 @@ on-disk baseline ``runs/vibe_bench/IMG_6915_R2_layered.jpg`` is optional
 FAST tests (always run):
 - Baseline file, if present, has md5 == ``G1_MD5`` and decodes as uint8 RGB
   (skips with the exact ``cp`` restore command if absent).
-- Wheel-shipped tensor bytes md5 == ``TENSOR_MD5``.
+- Wheel-shipped tensor bytes md5 == ``TENSOR_MD5`` / ``TENSOR_MD5_50``.
 - ``--layered-gather`` flag is REMOVED from argparse (P1.10.4 C5).
 
-SLOW test (``-m slow``, 6 cases — CLI-1a B2.4 + Run 6):
+SLOW test (``-m slow``, 5 cases):
 - Re-run the canonical IMG_6915 bench (argv built from ``CANONICAL_FLAGS``,
-  default tensor) via both entrypoints x {OFF, ``--occlusion-compositing on``}
-  and assert output md5 == ``G1_MD5`` / ``ON_MD5``.
-- Run 6 (G2): ``off_old`` / ``on_old`` (convolve only) re-run the PRE-flip
-  look via ``CANONICAL_FLAGS_OLD`` and assert ``G1_MD5_OLD`` / ``ON_MD5_OLD``:
-  the old look stays reachable through explicit flags. On failure the
-  message carries macOS build, pyobjc version, tensor md5 and max-abs vs
-  the baseline (if present) so OS drift explains itself.
+  default 35 mm tensor) via both entrypoints x {OFF, ``--occlusion-compositing
+  on``} and assert output md5 == ``G1_MD5`` / ``ON_MD5``; plus ``--lens 50``
+  (convolve only) == ``LENS50_MD5``. On failure the message carries macOS
+  build, pyobjc version, tensor md5 and max-abs vs the baseline (if present)
+  so OS drift explains itself.
 """
 from __future__ import annotations
 
@@ -36,12 +34,11 @@ from summicron.render._bench import (
     CANONICAL_FLAGS,
     G1_FOCUS_XY,
     G1_IMAGE,
-    CANONICAL_FLAGS_OLD,
     G1_MD5,
-    G1_MD5_OLD,
+    LENS50_MD5,
     ON_MD5,
-    ON_MD5_OLD,
     TENSOR_MD5,
+    TENSOR_MD5_50,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -140,11 +137,10 @@ def test_default_tensor_md5_matches_pin():
     """HYG-0 7b — wheel-shipped tensor bytes are the pinned artifact."""
     from summicron.render._artifacts import default_tensor_path
 
-    tp = default_tensor_path()
-    got = _md5(tp)
-    assert got == TENSOR_MD5, (
-        f"default tensor {tp} md5 {got} != TENSOR_MD5 {TENSOR_MD5}"
-    )
+    for lens, pin in (("35", TENSOR_MD5), ("50", TENSOR_MD5_50)):
+        tp = default_tensor_path(lens)
+        got = _md5(tp)
+        assert got == pin, f"lens {lens} tensor {tp} md5 {got} != pin {pin}"
 
 
 def test_layered_gather_flag_removed():
@@ -187,17 +183,15 @@ _ON = ("--occlusion-compositing", "on")
 _MODES = {
     "off": ((), G1_MD5, CANONICAL_FLAGS),
     "on": (_ON, ON_MD5, CANONICAL_FLAGS),
-    "off_old": ((), G1_MD5_OLD, CANONICAL_FLAGS_OLD),
-    "on_old": (_ON, ON_MD5_OLD, CANONICAL_FLAGS_OLD),
+    "lens50": (("--lens", "50"), LENS50_MD5, CANONICAL_FLAGS),
 }
-_LABEL = {"off": "G1", "on": "ON", "off_old": "G1-old", "on_old": "ON-old"}
+_LABEL = {"off": "G1", "on": "ON", "lens50": "LENS50"}
 _CASES = [
     pytest.param(ep, mode, id=f"{ep}-{mode}")
     for mode in ("off", "on")
     for ep in _ENTRYPOINTS
 ] + [
-    pytest.param("convolve", "off_old", id="convolve-off_old"),
-    pytest.param("convolve", "on_old", id="convolve-on_old"),
+    pytest.param("convolve", "lens50", id="convolve-lens50"),
 ]
 
 
@@ -261,5 +255,5 @@ test_backcompat_canonical_render_matches_baseline.__test__ = False
 @pytest.mark.slow
 @pytest.mark.parametrize("entrypoint,mode", _CASES)
 def test_backcompat_canonical_render_md5(tmp_path, entrypoint, mode):
-    """CLI-1a B2.4 — {convolve, isummicron} x {OFF, ON}."""
+    """CLI-1a B2.4 — {convolve, isummicron} x {OFF, ON}, plus --lens 50."""
     test_backcompat_canonical_render_matches_baseline(tmp_path, entrypoint, mode)

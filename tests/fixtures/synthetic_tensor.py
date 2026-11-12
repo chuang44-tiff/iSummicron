@@ -5,7 +5,7 @@ shape: ``d=0`` slices are pure single-pixel deltas (mirroring the P1.9
 build-time delta guard), ``d >= 1`` slices are small normalized
 Gaussians. Used by tests that need to drive ``load_tensor`` +
 ``render`` through non-default tensor shapes without depending on a
-real CodeV tensor.
+shipped tensor.
 
 The factory intentionally produces kernels that pass through
 ``load_tensor`` without triggering the

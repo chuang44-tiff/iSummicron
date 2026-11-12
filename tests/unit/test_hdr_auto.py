@@ -76,8 +76,6 @@ def test_default_hdr_source_is_auto_everywhere():
 def test_canonical_bench_keeps_explicit_macos():
     o = RenderOptions.canonical_bench("x.heic", (0.4, 0.4))
     assert o.hdr_source == "macos"
-    o = RenderOptions.canonical_bench("x.heic", (0.4, 0.4), old_look=True)
-    assert o.hdr_source == "macos"
 
 
 def test_auto_accepts_input_lut_and_shadow_statically():

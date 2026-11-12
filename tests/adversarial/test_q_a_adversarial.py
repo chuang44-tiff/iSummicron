@@ -352,7 +352,7 @@ def fake_pipeline(monkeypatch):
 def _opts(tmp_path, **kw):
     from summicron.render.api import RenderOptions
     return RenderOptions(image_path=tmp_path / "img.heic",
-                         tensor_path=tmp_path / "t.npz", save=False,
+                         save=False,
                          return_linear=True, **kw)
 
 

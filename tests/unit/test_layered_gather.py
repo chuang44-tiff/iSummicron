@@ -154,7 +154,6 @@ _TENSOR_PATH = default_tensor_path()
 
 @pytest.mark.slow  # two full 2048 renders (HYG-0 item 15)
 @pytest.mark.skipif(not _IMG_6915.exists(), reason="IMG_6915.HEIC not available")
-@pytest.mark.skipif(not _TENSOR_PATH.exists(), reason="tensor not available")
 def test_face_falloff_monotonic():
     """G12: Laplacian variance nose→brow→hair strictly monotonically decreasing.
 

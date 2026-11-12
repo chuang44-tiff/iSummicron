@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 from scipy.ndimage import binary_dilation
 
-import summicron.psf_model.downscale_tensor as dt
+import summicron.render.convolve as dt
 from summicron.render import _bench
 from summicron.render.api import RenderOptions
 from summicron.render.convolve import render
@@ -41,7 +41,9 @@ def spy(monkeypatch):
         calls.append(size)
         return orig(size)
 
-    monkeypatch.setattr(dt, "_make_delta", _w)
+    import sys
+    for mod in {id(m): m for m in (dt, sys.modules.get("summicron.render.convolve")) if m}.values():
+        monkeypatch.setattr(mod, "_make_delta", _w)
     return calls
 
 

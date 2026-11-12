@@ -48,27 +48,6 @@ def _bright_thresh_type(value: str):
         ) from None
 
 
-_APERTURE_PRESETS = {"35/2": 17.5, "50/2": 25.0, "apple": 13.5}
-
-
-def _lens_aperture_type(value: str):
-    """argparse ``type=`` for ``--lens-aperture-mm``: a number (mm) or a preset
-    (``35/2`` -> 17.5, ``50/2`` -> 25.0, ``apple`` -> 13.5).
-
-    Range/finite checks live in ``RenderOptions.__post_init__`` (single source);
-    only parseability is checked here.
-    """
-    if value in _APERTURE_PRESETS:
-        return _APERTURE_PRESETS[value]
-    try:
-        return float(value)
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            f"invalid --lens-aperture-mm {value!r}: expected a number (mm) or one "
-            f"of {', '.join(_APERTURE_PRESETS)}"
-        ) from None
-
-
 def _stamp_gain_type(value: str):
     """argparse ``type=`` for ``--bright-stamp-gain`` (range check in
     ``RenderOptions.__post_init__``)."""
@@ -86,8 +65,17 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
     parser.add_argument(
         "--tensor",
         default=None,
-        help="4D tensor .npz path. When omitted, defaults to the wheel-shipped "
-             "canonical tensor (summicron.render._artifacts.default_tensor_path()).",
+        help="custom tensor built with scripts/build_psf; not combinable with "
+             "--lens. When omitted, the wheel-shipped tensor selected by --lens "
+             "is used.",
+    )
+    parser.add_argument(
+        "--lens",
+        choices=["35", "50"],
+        default=None,
+        help="35 = 35 mm f/2 ray-traced from the expired US patent 3,006,249, "
+             "Example II (default); 50 = 50 mm f/2 double-Gauss (optiland "
+             "sample). Both ray-traced with optiland.",
     )
     parser.add_argument(
         "--out-dir",
@@ -140,7 +128,7 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
         "--depth-gain",
         type=_depth_gain_type,
         default="auto",
-        help="S1: diopter gain, 'auto' (default; auto_gain lo=1.0, hi=2.0) or "
+        help="S1: diopter gain, 'auto' (default; physical, gain 1.0) or "
              "a number in (0, 10]. Only valid with --depth-mapping diopter/auto "
              "(except the inert default 'auto').",
     )
@@ -167,16 +155,6 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
              "Never upscales. Affects output filename suffix (_r<value>). "
              "P1.10.4: replaces former `--working-long-edge` (collapsed; behavior "
              "preserved via downres_array's HDR-aware scipy bilinear path).",
-    )
-    parser.add_argument(
-        "--psf-norm",
-        choices=["l1", "peak"],
-        default="l1",
-        help="PSF normalization mode. 'l1' (default) keeps kernels L1-normed "
-             "and averages via post-conv weight-sum divide (bit-identical to "
-             "pre-P1.7 render path). 'peak' peak-normalizes kernels (stamp "
-             "mode): bright pixels bloom by sum(kernel) and overflow clips at "
-             "finalize. See doc/plan/phase1/section7/locked-spec-stamp-mode.md.",
     )
     # P1.10.4 C5: --layered-gather / --no-layered-gather flag removed.
     # Layered gather is the SOLE rendering path. The render() kwarg
@@ -322,44 +300,35 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
              "R-highlight-guard). See doc/plan/phase2/section3_occlusion-"
              "layering/locked-spec-R-occlusion-layering.md.",
     )
-    # ---- S22 S1: synthetic disc kernel family (experimental, OFF by default)
+    # ---- removed in 0.5.0: tombstones (hidden). _validate_args turns any use
+    # into a one-line error that points at the migration note.
     parser.add_argument(
-        "--kernel-family",
-        choices=["codev", "synthetic"],
-        default="codev",
-        help="Kernel family. 'codev' (default) = the wheel-shipped CodeV "
-             "tensor. 'synthetic' = physically sized defocus discs around the "
-             "CodeV aberration PSF (built at run time, cached in the user "
-             "cache dir): a 35 mm f/2 at the iPhone's framing is an "
-             "aperture A = 17.5 mm. Experimental, off by default. Requires "
-             "LiDAR depth, --psf-norm l1 and --depth-mapping diopter/auto; "
-             "not combinable with --tensor.",
+        "--kernel-family", nargs="?", default=argparse.SUPPRESS,
+        dest="_removed_kernel_family", help=argparse.SUPPRESS,
     )
     parser.add_argument(
-        "--lens-aperture-mm",
-        type=_lens_aperture_type,
-        default=None,
-        metavar="MM_OR_PRESET",
-        help="Synthetic family only: entrance-pupil diameter in mm in [3, 30] "
-             "(default 17.5 = 35 mm f/2) or a preset: '35/2' (17.5), '50/2' "
-             "(25.0), 'apple' (13.5). Larger = bigger bokeh discs.",
+        "--lens-aperture-mm", nargs="?", default=argparse.SUPPRESS,
+        dest="_removed_lens_aperture_mm", help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--psf-norm", nargs="?", default=argparse.SUPPRESS,
+        dest="_removed_psf_norm", help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--bright-stamp",
         choices=["auto", "peak", "l1"],
         default="auto",
-        help="Bright-pass stamp. 'auto' (default) = 'peak' for the codev "
-             "family (today's look), 'l1' for synthetic. 'peak' = "
+        help="Bright-pass stamp. 'auto' (default) = 'l1'. 'peak' = "
              "peak-normalised kernel (area-times bloom); 'l1' = the "
              "L1-normalised kernel times --bright-stamp-gain "
-             "(energy-honest). 'l1' requires --psf-norm l1.",
+             "(energy-honest).",
     )
     parser.add_argument(
         "--bright-stamp-gain",
         type=_stamp_gain_type,
         default=None,
         help="Gain of the 'l1' bright stamp, a number in (0, 16] (default "
-             "2.0 under an 'l1' stamp). Requires --bright-stamp l1 (or auto "
-             "with --kernel-family synthetic).",
+             "2.0 under an 'l1' stamp). Requires an 'l1' stamp (--bright-stamp "
+             "l1, or auto).",
     )
     return parser

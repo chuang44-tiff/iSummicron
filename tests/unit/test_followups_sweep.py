@@ -75,20 +75,6 @@ def test_budget_below_base_message(monkeypatch):
     assert "smaller than 256" not in str(exc.value)
 
 
-def test_peak_fallback_warns_once_no_cli_line(capsys):
-    img, dmap = _step_scene()
-    ods = np.geomspace(0.7, 20.0, 11)
-    d = np.interp(dmap, np.linspace(0, 1, 11), ods).astype(np.float32)
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        cv.render(img, _tensor(), depth_m=d, psf_norm="peak",
-                  occlusion_compositing="on")
-    peak = [x for x in w if issubclass(x.category, RuntimeWarning)
-            and "psf-norm peak" in str(x.message)]
-    assert len(peak) == 1
-    assert "falling back" not in capsys.readouterr().out
-
-
 # ---------------------------------------------------------------------------
 # Fix round: single-step downres suggestion, run_cli_render re-raise, debug
 # ---------------------------------------------------------------------------

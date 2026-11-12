@@ -6,15 +6,13 @@ Attack surface covered:
       blended kernel at render-time *first* defocus bin takes the
       fast-path (no angular rotation), then at the second bin takes the
       full 8-wedge rotated path. Quality discontinuity across the bin
-      boundary. XFAIL-strict — documents the seam.
+      boundary. (Was a strict xfail on the removed legacy tensor; a plain guard since 0.5.0.)
 - B2: Warning predicate with numpy scalar True for only one flag.
       Guards against `bool(np.bool_)` quirks when one flag is numpy
       scalar and the other is Python bool.
 - B3: Inverse focus (tree-sharp) sanity — pin the observed stuffed-
       animal-still-sharper pathology for carry-forward. XFAIL-strict on
       the real IMG_6651.HEIC fixture, guarded by file existence.
-- B4: downscale_tensor silently accepts its own output as input
-      (scale=1, all gates still pass). Flag as an idempotence smell.
 - B5: L1 preservation check across the guard at float32 exactness —
       pre-guard kernel L1 is float32-exact 1.0 only via assertion
       tolerance; `_make_delta` is float32 with exact sum 1.0. Pin.
@@ -29,11 +27,9 @@ import pytest
 
 from summicron.render._artifacts import default_tensor_path
 
-from summicron.psf_model.downscale_tensor import _make_delta, downscale_tensor
-from summicron.render.convolve import _bilinear_weights
+from summicron.render.convolve import _bilinear_weights, _make_delta
 
 
-REAL_CODEV = Path(__file__).resolve().parents[2] / "runs" / "ag_dblgauss" / "ag_dblgauss_f2.0_render.npz"
 REAL_IPHONE = default_tensor_path()
 
 
@@ -41,24 +37,16 @@ REAL_IPHONE = default_tensor_path()
 # B1: is_delta fast-path flips at d-index boundary
 # ----------------------------------------------------------------------
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="P1.9 pre-existing bilinear-blend seam: bin_c=0.0625 blends "
-           "0.375*delta + 0.625*raw[r,1] -> peak/sum ~0.62 (is_delta True) but "
-           "bin_c=0.1875 blends 0.125*raw[r,1] + 0.875*raw[r,2] -> is_delta "
-           "False. Angular rotation is applied in bin 1 but not bin 0, "
-           "producing a visible kernel discontinuity across the boundary. "
-           "Fix TBD: lower is_delta threshold, or rotate the blended kernel "
-           "unconditionally.",
-)
-@pytest.mark.skipif(not REAL_IPHONE.exists(), reason="iphone tensor not regen'd")
-def test_b1_bilinear_blend_d0_boundary_no_is_delta_flip():
+@pytest.mark.parametrize("lens", ["35", "50"])
+def test_b1_bilinear_blend_d0_boundary_no_is_delta_flip(lens):
     """With delta at d=0 + raw PSF at d=1, the is_delta predicate
     (peak > 0.5*sum) must be CONSISTENT across the whole d-index range
     [d_center_bin_0, d_center_bin_1]; otherwise the renderer switches
     code paths mid-blend and produces a visible seam.
     """
-    d = np.load(str(REAL_IPHONE))
+    # 0.5.0: this was a strict xfail on the removed legacy tensor (seam at bin_c 0.0625 vs
+    # 0.1875). The optiland tensors have no such seam, so it is a plain regression guard.
+    d = np.load(str(default_tensor_path(lens)))
     re = d["radial_edges"]
     dr = d["defocus_ratios"]
     K = d["kernels"]
@@ -73,10 +61,7 @@ def test_b1_bilinear_blend_d0_boundary_no_is_delta_flip():
             for (ri, di), bw in zip(idx, w):
                 kb = kb + bw * K[ri, di]
             is_delta = kb.max() > 0.5 * kb.sum()
-            # We pin the EXPECTED invariant: adjacent bins should agree.
-            # Today they DO NOT at bin_c=0.0625 vs 0.1875 for r=0 —
-            # hence xfail. When this starts passing, either threshold
-            # was changed or the blend was reshaped.
+            # Invariant: adjacent bins agree on the is_delta verdict.
             if bin_c == 0.0625:
                 bin0_is_delta = is_delta
             else:
@@ -152,10 +137,7 @@ REAL_IMAGE = Path(__file__).resolve().parents[2] / "iphoneImage" / "IMG_6651.HEI
 
 
 @pytest.mark.slow
-@pytest.mark.skipif(
-    not (REAL_IMAGE.exists() and REAL_IPHONE.exists()),
-    reason="bench image or tensor missing",
-)
+@pytest.mark.skipif(not REAL_IMAGE.exists(), reason="bench image missing")
 def test_b3_inverse_focus_tree_is_sharper():
     """Render with tap on tree; tree should be sharper than stuffed animal."""
     import subprocess
@@ -174,7 +156,6 @@ def test_b3_inverse_focus_tree_is_sharper():
                 "--depth-scale", "10",
                 "--downres", "2048",
                 "--focus-xy", "0.5", "0.15",
-                "--psf-norm", "l1",
                 "--hdr-source", "macos",
                 "--output", str(out),
             ],
@@ -200,26 +181,6 @@ def test_b3_inverse_focus_tree_is_sharper():
 # ----------------------------------------------------------------------
 # B4: Idempotence on own output
 # ----------------------------------------------------------------------
-
-@pytest.mark.skipif(not REAL_IPHONE.exists(), reason="iphone tensor not regen'd")
-def test_b4_downscale_on_own_output_is_near_idempotent(tmp_path: Path):
-    """Running downscale_tensor on its own output (already-downscaled)
-    must not corrupt the tensor. Observed: succeeds but introduces
-    ~1e-7 float32 jitter from cubic zoom at scale=1 (NOT bit-identical).
-    Pins the design flaw: no regen-detection guard. If downscale ever
-    gains a hard guard against double-downscale, flip this to expect an
-    error. If it ever becomes bit-identical (scale=1 short-circuit),
-    tighten to assert_array_equal."""
-    out = tmp_path / "second_pass.npz"
-    downscale_tensor(REAL_IPHONE, out, target_long_edge=5712)
-    d1 = np.load(str(REAL_IPHONE))
-    d2 = np.load(str(out))
-    # Within float32 cubic-zoom jitter (~1e-7) — the delta slices at d=0
-    # are exact though.
-    np.testing.assert_allclose(d1["kernels"], d2["kernels"], atol=1e-6)
-    # d=0 delta slices must remain EXACT across passes.
-    np.testing.assert_array_equal(d1["kernels"][:, 0], d2["kernels"][:, 0])
-    assert bool(d2["delta_guard_applied"]) is True
 
 
 # ----------------------------------------------------------------------

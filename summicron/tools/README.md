@@ -43,7 +43,7 @@ WARN: co-planar surface (center≈annulus); subject may not isolate
 
 conda run -n isummicron python -m summicron.render.convolve \
   --image iphoneImage/IMG_6651.HEIC \
-  --depth-source lidar --depth-scale 10 --downres 2048 --psf-norm l1 --hdr-source macos \
+  --depth-source lidar --depth-scale 10 --downres 2048 --hdr-source macos \
   --focus-xy 0.5000 0.7500 \
   --output runs/vibe_bench/IMG_6651_bench.jpg
 ```
@@ -57,7 +57,7 @@ Interpreting the fields:
   `0 < depth_center < 1.0 m`. Meaning: the subject you clicked is
   co-planar with its surround; even a correct tap will NOT isolate the
   subject from the background at this depth resolution. Options: pick a
-  different subject, add segmentation, or bump CodeV bin count.
+  different subject, add segmentation, or use a finer depth sampling.
 
 ### Flags
 
@@ -107,7 +107,7 @@ future non-HEIC callers but is NOT wired into the picker's click path
 - **LiDAR resolution is the real ceiling.** When subject and background
   are < 30 mm apart, no anchor math saves you. The picker will warn you,
   but the fix is LiDAR × DA2 depth fusion (a different round) or a
-  CodeV bin-count increase (also a different round).
+  finer tensor depth sampling (also a different round).
 - **No preview render.** The picker prints a command; it does not render.
   Copy-paste into your shell. A "render now" button was cut as scope.
 - **Static window only.** No zoom / pan / high-DPI refinement beyond

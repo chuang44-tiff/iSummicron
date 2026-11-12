@@ -430,7 +430,7 @@ def test_canonical_template_has_all_required_flags():
     """Regression: the template must carry every flag from runs/vibe_bench/README.md."""
     # HYG-0 item 2: --tensor intentionally absent (default wheel tensor).
     required = ("--image", "--depth-source",
-                "--downres", "--focus-xy", "--psf-norm", "--hdr-source",
+                "--downres", "--focus-xy", "--hdr-source",
                 "--output")
     for flag in required:
         assert flag in CANONICAL_TEMPLATE, f"missing flag {flag}"
@@ -443,9 +443,9 @@ def test_canonical_template_follows_canonical_flags():
     assert "--depth-scale" not in CANONICAL_TEMPLATE
 
 
-def test_canonical_template_psf_norm_l1():
-    """Canonical bench uses raw tensor with --psf-norm l1."""
-    assert "--psf-norm l1" in CANONICAL_TEMPLATE
+def test_canonical_template_has_no_psf_norm():
+    """--psf-norm was removed in 0.5.0 (tombstone); the template must not emit it."""
+    assert "--psf-norm" not in CANONICAL_TEMPLATE
 
 
 # ---------------------------------------------------------------------------

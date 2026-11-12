@@ -28,8 +28,6 @@ def test_defaults():
     assert o.tonemap == "auto" and o.bright_pass_thresh is None
     c = RenderOptions.canonical_bench("a.jpg", (0.4, 0.4))
     assert c.tonemap == "auto" and c.bright_pass_thresh is None
-    c = RenderOptions.canonical_bench("a.jpg", (0.4, 0.4), old_look=True)
-    assert c.tonemap == "ci" and c.bright_pass_thresh == 1.0
 
 
 def test_argparse_values():

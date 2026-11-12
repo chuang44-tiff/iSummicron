@@ -102,7 +102,7 @@ def test_non_square_kernels(tmp_path):
 
 
 def test_even_side_kernels_warns_only(tmp_path, recwarn):
-    """Even-sided kernels are valid intermediate state (pre-downscale CodeV
+    """Even-sided kernels are valid intermediate state (pre-downscale
     2048x2048 tensors); load_tensor warns but does not raise. The basis
     kernel builder errors localised at render time if it actually receives
     an even-sided tensor."""

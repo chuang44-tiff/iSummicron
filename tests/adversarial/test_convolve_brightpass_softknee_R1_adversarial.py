@@ -177,29 +177,6 @@ def test_is_delta_branch_suppresses_bright_at_nonzero_knee():
     )
 
 
-# ---------------------------------------------------------------------------
-# Hunt idea 9: peak/stamp mode interaction.
-# ---------------------------------------------------------------------------
-
-def test_soft_knee_with_psf_norm_peak_stamp_mode():
-    """Hunt idea 9: psf_norm='peak' (stamp mode) auto-exposes by output.max().
-    Check soft-knee still produces finite, bounded output in stamp mode.
-
-    This is a smoke test — catches divide-by-zero if omax drifts, and
-    NaN/Inf from the two-path accumulator interacting with stamp-mode renorm.
-    """
-    img = np.full((64, 64, 3), 0.3, dtype=np.float32)
-    img[28:36, 28:36, :] = 2.0  # bright blob
-    dm = np.full((64, 64), 0.6, dtype=np.float32)
-    t = _blur_tensor()
-    _a, out = render_with_defocus(img, t, dmap=dm, hdr_source="macos",
-                     psf_norm="peak", bright_thresh=1.0)
-    assert np.all(np.isfinite(out)), "stamp mode + soft-knee: non-finite output"
-    assert float(out.max()) <= 1.0 + 1e-4, (
-        f"stamp mode should auto-expose to max <=1.0, got {float(out.max())}"
-    )
-
-
 # P1.10.2 Cut 3: test_soft_knee_beats_hard_boolean_on_uniform_canopy_strict
 # DELETED — compared bright_knee=0.0 vs bright_knee=0.4, both removed.
 
@@ -254,7 +231,7 @@ def test_render_kwargs_stable_for_positional_callers():
     # because they are kwarg-only. Pin includes them for drift detection.
     expected = [
         "image_srgb", "tensor", "depth_m",
-        "psf_norm", "hdr_source", "bright_thresh",
+        "hdr_source", "bright_thresh",
         "bright_pass_region_size", "bright_pass_floor", "bright_pass_norm_pct",
         "occlusion_compositing",
         "slab_batch_size", "on_progress", "cancel", "stats",

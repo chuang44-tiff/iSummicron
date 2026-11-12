@@ -7,7 +7,7 @@ per LOCKED SPEC Section 9 / P0.3 §7):
 - ``frame_hw``: [int, int] — (H, W), always [1024, 1024] in v0.
 - ``optical_center_xy``: [int, int] — always [512, 512] in v0.
 - ``focus_distance_m``: float — load-bearing for wrap-probe diagnostic;
-  always 0.70 in v0 (matches the CodeV tensor).
+  always 0.70 in v0 (matches the shipped tensors).
 - ``discs`` (bubble_*) OR ``tiles`` (usaf_depth): per-element ground
   truth list. ``seed`` is appended for ``bubble_random``.
 
@@ -31,7 +31,7 @@ from typing import Any
 import numpy as np
 
 # Tensor-native in-scope depths (from
-# summicron/psf_model/codev_to_render.py → object_distances_m, restricted
+# summicron/psf_model/ray_kernel.py → OBJECT_DISTANCES_M, restricted
 # to the 9 values the LOCKED SPEC §1 uses for PSF-QC discs).
 TENSOR_DEPTHS_M: tuple[float, ...] = (
     0.70, 0.98, 1.37, 1.91, 2.68, 3.74, 5.23, 7.32, 10.23,
@@ -41,7 +41,7 @@ TENSOR_DEPTHS_M: tuple[float, ...] = (
 # when the corresponding disc carries ``wrap_applied=true``.
 WRAP_PROBE_DEPTH_M: float = 0.40
 
-# v0 focus distance (CodeV tensor matches this). Load-bearing: consumers
+# v0 focus distance (the shipped tensors match this). Load-bearing: consumers
 # use this to compute the wrapped effective depth for disc #11.
 FOCUS_DISTANCE_M: float = 0.70
 

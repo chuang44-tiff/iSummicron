@@ -29,34 +29,26 @@ class ResolvedModes:
         )
 
 
+# Gain of the energy-honest ``l1`` bright stamp when none is given.
+DEFAULT_BRIGHT_STAMP_GAIN = 2.0
+
+
 @dataclass(frozen=True)
-class ResolvedFamily:
-    kernel_family: str
-    lens_aperture_mm: float | None
+class ResolvedStamp:
     bright_stamp: str
     bright_stamp_gain: float | None
 
 
-def resolve_family(opts) -> ResolvedFamily:
-    """Resolve the S22 S1 family / stamp flags (pure; spec 3.1).
+def resolve_stamp(opts) -> ResolvedStamp:
+    """Resolve the bright-stamp flags (pure).
 
-    Aperture: ``None`` for codev, 17.5 under synthetic unless explicit. Stamp:
-    ``auto`` -> ``l1`` (synthetic) / ``peak`` (codev). Gain: ``None`` under a
-    ``peak`` stamp, else the explicit value or 2.0 (``is None`` idiom, not
-    truthiness).
+    Stamp: ``auto`` -> ``l1``. Gain:
+    ``None`` under a ``peak`` stamp, else the explicit value or 2.0 (``is
+    None`` idiom, not truthiness).
     """
-    from summicron.render._family import (
-        DEFAULT_APERTURE_MM, DEFAULT_BRIGHT_STAMP_GAIN,
-    )
-
-    synth = opts.kernel_family == "synthetic"
-    aperture = (
-        (DEFAULT_APERTURE_MM if opts.lens_aperture_mm is None else opts.lens_aperture_mm)
-        if synth else None
-    )
     stamp = opts.bright_stamp
     if stamp == "auto":
-        stamp = "l1" if synth else "peak"
+        stamp = "l1"
     if stamp == "peak":
         gain = None
     else:
@@ -64,10 +56,7 @@ def resolve_family(opts) -> ResolvedFamily:
             DEFAULT_BRIGHT_STAMP_GAIN if opts.bright_stamp_gain is None
             else opts.bright_stamp_gain
         )
-    return ResolvedFamily(
-        kernel_family=opts.kernel_family, lens_aperture_mm=aperture,
-        bright_stamp=stamp, bright_stamp_gain=gain,
-    )
+    return ResolvedStamp(bright_stamp=stamp, bright_stamp_gain=gain)
 
 
 MONOCULAR_NOTE = (
@@ -165,12 +154,6 @@ def resolve_auto(
             "resolved to linear (no LiDAR depth)"
         )
         warns.append(w)
-
-    if getattr(opts, "kernel_family", "codev") == "synthetic" and mp != "diopter":
-        raise ValueError(
-            "--kernel-family synthetic requires LiDAR depth "
-            "(depth mapping resolved to linear)"
-        )
 
     # ---- tonemap
     if tm_in == "auto":

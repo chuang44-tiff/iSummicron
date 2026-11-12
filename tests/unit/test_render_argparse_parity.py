@@ -62,7 +62,8 @@ def test_render_dests_match_render_options_fields():
     """(ii) parser dests == fields(RenderOptions) - {return_linear}, mod alias."""
     from summicron.render.api import RenderOptions
 
-    dests = {_ALIAS.get(d, d) for d in _spec(_convolve_parser())}
+    # hidden 0.5.0 tombstone dests (removed flags) never reach RenderOptions
+    dests = {_ALIAS.get(d, d) for d in _spec(_convolve_parser()) if not d.startswith("_removed_")}
     names = {f.name for f in dataclasses.fields(RenderOptions)} - {"return_linear", "save"}
     assert dests == names
 

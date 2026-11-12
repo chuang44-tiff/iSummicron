@@ -5,19 +5,14 @@ import warnings
 from pathlib import Path
 
 import numpy as np
-import pytest
 
-from summicron.psf_model.downscale_tensor import downscale_tensor
+from summicron.render._artifacts import default_tensor_path
 from summicron.render.convolve import load_tensor
 
-REAL_CODEV = Path(__file__).resolve().parents[2] / "runs" / "ag_dblgauss" / "ag_dblgauss_f2.0_render.npz"
 
-
-@pytest.mark.skipif(not REAL_CODEV.exists(), reason="real CodeV tensor not present")
 def test_delta_guard_schema_legacy_npz(tmp_path: Path):
-    regen = tmp_path / "regen.npz"
-    downscale_tensor(REAL_CODEV, regen, target_long_edge=5712)
-    data = dict(np.load(str(regen), allow_pickle=True))
+    data = dict(np.load(str(default_tensor_path("35")), allow_pickle=False))
+    assert bool(data["delta_guard_applied"]) is True  # shipped artifact carries the guard
     data.pop("delta_guard_applied", None)
     legacy = tmp_path / "legacy.npz"
     np.savez(str(legacy), **data)

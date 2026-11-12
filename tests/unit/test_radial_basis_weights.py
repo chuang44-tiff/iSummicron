@@ -26,7 +26,7 @@ from summicron.render.convolve import _radial_basis_weights
 # ---------------------------------------------------------------------------
 
 def _canonical_r_centers(Nr: int = 12) -> np.ndarray:
-    """Mirror the canonical CodeV tensor's R-axis sqrt-quadrature edges → centers.
+    """Mirror the shipped tensors' R-axis sqrt-quadrature edges → centers.
 
     The raw tensor's `radial_bin_edges_hmax = sqrt(linspace(0, 1, 12))` and
     `r_centers = 0.5 * (edges[:-1] + edges[1:])` (length Nr-1). For tests we
