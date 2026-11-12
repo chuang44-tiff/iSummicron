@@ -48,6 +48,7 @@ EXPECTED_DICT_KEYS = frozenset(
         "delta_guard_applied",
         "object_distances_m",
         "focus_distance_m",
+        "synth_family",  # S22 S1 (additive)
         "R",
         "D",
     ]

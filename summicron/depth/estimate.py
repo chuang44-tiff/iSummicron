@@ -158,6 +158,9 @@ def estimate_depth(image_rgb: np.ndarray, model_bundle: dict) -> np.ndarray:
 def extract_lidar_depth(
     heic_path: str | Path,
     target_hw: tuple[int, int] | None = None,
+    *,
+    depth_guided: str = "off",
+    depth_matte: str = "off",
 ) -> np.ndarray | None:
     """Decode iPhone HEIC embedded LiDAR/disparity to METERS.
 
@@ -170,6 +173,10 @@ def extract_lidar_depth(
     heic_path : path to .HEIC file.
     target_hw : optional ``(H, W)`` to resize to via bilinear. If None, the
         native depth-aux shape is returned.
+    depth_guided : ``"off"`` (default) or ``"on"``: light luminance-guided
+        smoothing of the LiDAR-grid staircase (section15 A1).
+    depth_matte : ``"off"`` (default) or ``"on"``: Apple portrait-matte
+        correction inside a narrow band (section15 A2; no-op without a matte).
 
     Notes
     -----
@@ -180,6 +187,10 @@ def extract_lidar_depth(
     against disp ≈ 0 producing extreme reciprocals downstream.
     """
     import pillow_heif
+
+    for _name, _val in (("depth_guided", depth_guided), ("depth_matte", depth_matte)):
+        if _val not in ("off", "on"):
+            raise ValueError(f"{_name} must be 'off' or 'on', got {_val!r}")
 
     heif = pillow_heif.open_heif(str(heic_path), convert_hdr_to_8bit=False)
     depth_imgs = heif.info.get("depth_images") or []
@@ -223,6 +234,26 @@ def extract_lidar_depth(
         raise ValueError("Gate FAIL: NaN in LiDAR depth")
     if np.any(np.isinf(depth_m)):
         raise ValueError("Gate FAIL: Inf in LiDAR depth")
+
+    if depth_guided == "on":
+        from summicron.depth.guided import load_luma_guide, smooth_lidar_staircase
+
+        guide = load_luma_guide(heic_path, depth_m.shape)
+        if guide is None:
+            warnings.warn(
+                "depth-guided: on, but the image could not be decoded as a guide; "
+                "LiDAR depth not smoothed."
+            )
+        else:
+            depth_m = smooth_lidar_staircase(depth_m, guide)
+    if depth_matte == "on":
+        from summicron.depth.matte import correct_depth_with_matte, load_portrait_matte
+
+        alpha = load_portrait_matte(heic_path, depth_m.shape, depth_m=depth_m)
+        if alpha is None:
+            warnings.warn("depth-matte: on, but no usable portrait matte; LiDAR depth unchanged.")
+        else:
+            depth_m, _report = correct_depth_with_matte(depth_m, alpha)
     return depth_m
 
 

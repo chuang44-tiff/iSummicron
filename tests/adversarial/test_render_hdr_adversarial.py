@@ -278,6 +278,7 @@ def test_cli_hdr_source_equals_form(tmp_path: Path):
             "--image", "/tmp/dummy.heic",
             "--tensor", str(tensor_path),
             "--hdr-source=macos",  # equals form
+            "--tonemap", "ci",
             "--output", str(out_path),
         ]),
     ):

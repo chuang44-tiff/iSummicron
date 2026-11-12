@@ -41,7 +41,7 @@ Fix: use the `--downres` value the message names.
 --depth-source=lidar but image has no embedded depth aux.
 ```
 
-The file is a HEIC without a depth image. Use an iPhone Portrait HEIC, or pass `--depth-source monocular`. For a JPEG or PNG, `--depth-source lidar` fails earlier with a reader message:
+The file is a HEIC without a depth image and you passed the strict `--depth-source lidar`. Use an iPhone Portrait HEIC, or drop the flag (the default `auto` falls back to monocular depth) or pass `--depth-source monocular`. For a JPEG or PNG, `--depth-source lidar` fails earlier with a reader message:
 
 <!-- external -->
 ```text

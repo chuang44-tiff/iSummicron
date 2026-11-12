@@ -25,19 +25,27 @@ sys.path.insert(0, str(ROOT / "tests" / "unit"))
 import privacy_gate as pg  # noqa: E402
 import render_notes as rn  # noqa: E402
 
-FAKE_SUMS = "\n".join(f"{'ab' * 32}  {n}" for n in rn.assets("0.3.0")[:-1]) + "\n"
+def _current_version() -> str:
+    """The version being prepared: the top entry of the overlay CHANGELOG (never hard-coded)."""
+    m = re.search(r"^## \[([0-9][^\]]*)\]", (OVERLAY / "CHANGELOG.md").read_text(), re.M)
+    return m.group(1)
+
+
+CUR = _current_version()
+
+FAKE_SUMS = "\n".join(f"{'ab' * 32}  {n}" for n in rn.assets(CUR)[:-1]) + "\n"
 OV_MD = [OVERLAY / "README.md", OVERLAY / "CHANGELOG.md", *sorted((OVERLAY / "docs").glob("*.md"))]
 DEV_ONLY_RE = [r"--kernel-centring", r"\bpins?\b", r"\bG1\b", r"\bdeploy\b", r"\bsection ?\d", r"\bround [A-Z0-9]",
                r"\bQ-[a-e]\b", r"\bR-[a-z]"]
 
 
-def _render(src: Path, version: str = "0.3.0") -> str:
+def _render(src: Path, version: str = CUR) -> str:
     return rn.render(src.read_text(), version, (OVERLAY / "CHANGELOG.md").read_text(),
                      (REL / "release-notes-disclosure.md").read_text(), FAKE_SUMS)
 
 
 def test_a_notes_render_and_pass_the_privacy_gate(tmp_path):
-    out = _render(NOTES / "0.3.0.md")
+    out = _render(NOTES / f"{CUR}.md")
     p = tmp_path / "notes.md"
     p.write_text(out)
     tokens = pg.build_token_patterns(ROOT)
@@ -46,7 +54,7 @@ def test_a_notes_render_and_pass_the_privacy_gate(tmp_path):
     pg.scan_text(rep, "notes", out, tokens)
     pg.scan_wide(rep, "notes", out, tokens, "P5")
     assert not rep.fails, rep.fails
-    src = (NOTES / "0.3.0.md").read_text()
+    src = (NOTES / f"{CUR}.md").read_text()
     for rx in DEV_ONLY_RE:
         assert not re.search(rx, src), rx
     assert len(src.splitlines()) <= 140
@@ -97,6 +105,6 @@ def test_f_stamp_simulation_leaves_no_placeholder(tmp_path):
     cp = tmp_path / "ov"
     shutil.copytree(OVERLAY, cp)
     for p in [cp / "README.md", *(cp / "docs").glob("*.md")]:
-        p.write_text(p.read_text().replace("{{VERSION}}", "0.3.0"))
+        p.write_text(p.read_text().replace("{{VERSION}}", CUR))
     for p in cp.rglob("*.md"):
         assert not re.search(r"\{\{[A-Z0-9_]+\}\}", p.read_text()), p

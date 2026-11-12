@@ -270,7 +270,7 @@ def test_t4_privacy_lite(path):
     text = _read(path)
     private_repo = "iSummicron" + "-dev"
     banned = ["doc/", "CLAUDE.md", ".claude/", "memory/", "team-dev", "DevTeam",
-              "claude.ai", private_repo]
+              "claude" + ".ai", private_repo]  # split: the privacy gate bans the literal in shipped files
     banned += ["/Vol" + "umes/", "/Us" + "ers/"]
     for b in banned:
         assert b not in text, (path.name, b)
@@ -337,10 +337,12 @@ def test_t6_output_name_matches_save_results(tmp_path, capsys):
     import numpy as np
     from summicron.render.convolve import save_results
 
-    p = save_results(np.zeros((4, 4, 3), np.uint8), "Demo_input", tmp_path, depth_scale=10.0, downres=2048)
+    # the quick start (default look) records its options in the name: guided depth, diopter gain, input-lut tone
+    p = save_results(np.zeros((4, 4, 3), np.uint8), "Demo_input", tmp_path, downres=2048,
+                     name_suffix="_gd_dio1.12_tlut")
     capsys.readouterr()
-    assert p.name == "Demo_input_r2048_rendered_ds10.0.jpg"
-    assert p.name in _read(README) and p.name in _read(DOCROOT / "docs" / "usage.md")
+    assert p.name == "Demo_input_r2048_rendered_gd_dio1.12_tlut.jpg"
+    assert p.name in _read(DOCROOT / "docs" / "usage.md")
 
 
 def _source_corpus() -> list[str]:

@@ -72,6 +72,7 @@ def test_render_hdr_path_end_to_end(tmp_path: Path) -> None:
             "--image", str(HDR_FIXTURE),
             "--tensor", str(tensor_path),
             "--hdr-source", "macos",
+            "--tonemap", "ci",
             "--output", str(out_path),
         ]),
     ):

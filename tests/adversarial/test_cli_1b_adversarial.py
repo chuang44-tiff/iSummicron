@@ -209,7 +209,7 @@ def test_canonical_bench_equals_readme_command():
         ns.image, tuple(ns.focus_xy), out_path=Path(ns.output)
     )
     assert cb == from_readme
-    assert cb.hdr_source == "macos" and cb.depth_scale == 10.0
+    assert cb.hdr_source == "macos" and cb.depth_scale == 1.0
     assert cb.downres == 2048 and cb.focus_xy == (0.40, 0.45)
 
 
@@ -405,7 +405,7 @@ def fake_pipeline(monkeypatch):
     import summicron.depth.estimate as est
 
     monkeypatch.setattr(est, "extract_lidar_depth",
-                        lambda p, target_hw=None: depth.copy())
+                        lambda p, target_hw=None, **kw: depth.copy())
     return img
 
 

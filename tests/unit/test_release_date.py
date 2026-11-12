@@ -74,17 +74,19 @@ def test_resolve_default_is_today_and_env_wins():
 
 def test_build_script_refuses_invalid_release_date():
     env = dict(os.environ, RELEASE_DATE="2026-99-99", RELEASE_ROOT="/nonexistent-release-root")
-    r = subprocess.run(["bash", str(REL / "build_release.sh"), "HEAD", "0.3.0"], cwd=ROOT, env=env,
+    r = subprocess.run(["bash", str(REL / "build_release.sh"), "HEAD", "9.9.9"], cwd=ROOT, env=env,
                        capture_output=True, text=True)
     assert r.returncode != 0 and "RELEASE_DATE" in r.stderr, (r.returncode, r.stderr)
 
 
 def test_commit_message_and_heading_share_one_source():
     sh = (REL / "build_release.sh").read_text()
-    assert 'echo "release: $VERSION ($RDATE)"' in sh
+    # the build-time message (G-msg) and the --commit check (G-date) both read the one recorded date
+    assert "'release: %s (%s)\\n\\n%s\\n\\n%s\\n' \"$VERSION\" \"$(cat \"$W/release-date.txt\")\"" in sh
+    assert '"release: $VERSION ($RDATE)"' in sh
     assert "date +%Y-%m-%d" not in sh  # no second clock read in the build
     assert "release-date.txt" in sh and "G-date" in sh
-    assert re.search(r'changelog_date\.py" stamp "\$STAGE/CHANGELOG\.md" "\$VERSION" "\$RDATE"', sh)
+    assert re.search(r'changelog_date\.py" stamp "\$STAGE/CHANGELOG\.md" "\$VERSION" "\$rdate"', sh)
 
 
 def test_cli_stamp_and_heading_roundtrip(tmp_path):
@@ -97,3 +99,15 @@ def test_cli_stamp_and_heading_roundtrip(tmp_path):
     assert r.stdout.strip() == "2026-11-12"
     assert p.read_text(encoding="utf-8") == cd.stamp(CHG, "0.4.0", "2026-11-12")
     assert run("stamp", str(p), "0.4.0", "nope").returncode == 1
+
+
+def test_history_gate_flags_changed_or_unreleased_old_entries():
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location(
+        "changelog_date", pathlib.Path(__file__).resolve().parents[2] / "scripts/release/changelog_date.py")
+    cd = importlib.util.module_from_spec(spec); spec.loader.exec_module(cd)
+    base = "## [0.3.0] — 2026-11-12\n- a\n\n[0.3.0]: x\n"
+    ok = "## [0.4.0] — unreleased\n- b\n\n## [0.3.0] — 2026-11-12\n- a\n\n[0.4.0]: y\n[0.3.0]: x\n"
+    assert cd.history_problems(ok, base) == []
+    assert cd.history_problems(ok.replace("2026-11-12", "2026-11-10"), base)
+    assert cd.history_problems(ok.replace("0.3.0] — 2026-11-12", "0.3.0] — unreleased"), base)

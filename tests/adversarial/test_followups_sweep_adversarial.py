@@ -36,7 +36,7 @@ def fake_lidar(monkeypatch):
     """Synthetic depth: near left half, far right half (no HEIC needed)."""
     import summicron.depth.estimate as de
 
-    def fake(path, target_hw):
+    def fake(path, target_hw, **kw):
         h, w = target_hw
         d = np.full((h, w), 0.7, np.float32)
         d[:, w // 2:] = 8.0

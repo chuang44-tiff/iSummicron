@@ -215,6 +215,7 @@ class World:
         shutil.copyfile(NPZ_SRC, st / "summicron/_artifacts/codev_render_v1.npz")
         md5 = self.md5(NPZ_SRC)
         (st / "summicron/render/_bench.py").write_text(f'TENSOR_MD5 = "{md5}"\n')
+        (st / "summicron/render/_artifacts.py").write_text('_ARTIFACT_NAME = "codev_render_v1.npz"\n')
         # stub gh + env
         self.bin.mkdir()
         gh = self.bin / "gh"

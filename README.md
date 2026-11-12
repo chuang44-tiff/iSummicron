@@ -10,16 +10,16 @@ Sample Portrait photo, focus `0.40 0.39`, `--downres 2048`, quick-start flags. C
 
 | Before | After |
 | --- | --- |
-| [![Before: the input, tonemapped](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.3.0/Demo_input_before.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.3.0/Demo_input_before.jpg) | [![After: rendered with iSummicron](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.3.0/Demo_input_after.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.3.0/Demo_input_after.jpg) |
-| [![Before, edge crop](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.3.0/Demo_input_before_edge.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.3.0/Demo_input_before_edge.jpg) | [![After, edge crop](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.3.0/Demo_input_after_edge.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.3.0/Demo_input_after_edge.jpg) |
+| [![Before: the input](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_before.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_before.jpg) | [![After: rendered with iSummicron](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_after.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_after.jpg) |
+| [![Before, edge crop](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_before_edge.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_before_edge.jpg) | [![After, edge crop](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_after_edge.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input_after_edge.jpg) |
 
-The images are attached to the v0.3.0 release. The render is darker than the input: see the [FAQ](docs/faq.md).
+The images are attached to the v0.4.0 release.
 
 ## Why
 
 Phone portrait blur is the same everywhere in the frame. A real lens is not: its blur changes shape from the center to the corners (swirl, cat-eye) and with distance from the focus plane. iSummicron convolves each pixel with a point spread function (PSF) picked by the pixel's radial position, angle and depth, from a table simulated in CODE V.
 
-In 0.3.0 the field variation is subtle: highlights render as near-round discs. Making it physically right is the goal of the next releases.
+The field variation of the shipped PSF table is still subtle: highlights render as near-round discs. Making it physically right is the goal of the next releases.
 
 **Scope:** bokeh only: blur shape, its variation across the field, and in-focus to out-of-focus transitions. Color science and tone curves are out of scope. This is a solo-dev portfolio project, not a commercial product and not a paper.
 
@@ -35,10 +35,10 @@ The wheel ships `summicron/_artifacts/codev_render_v1.npz`, a 4D tensor `(R=12 r
 
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install "isummicron[heic,hdr-macos] @ https://github.com/chuang44-tiff/iSummicron/releases/download/v0.3.0/isummicron-0.3.0-py3-none-any.whl"
+pip install "isummicron[heic,hdr-macos] @ https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/isummicron-0.4.0-py3-none-any.whl"
 ```
 
-Or from the tag: `pip install "isummicron[heic,hdr-macos] @ git+https://github.com/chuang44-tiff/iSummicron@v0.3.0"`. Add `depth` to the extras for the monocular fallback. All versions are listed at https://github.com/chuang44-tiff/iSummicron/releases.
+Or from the tag: `pip install "isummicron[heic,hdr-macos] @ git+https://github.com/chuang44-tiff/iSummicron@v0.4.0"`. Add `depth` to the extras for the monocular fallback. All versions are listed at https://github.com/chuang44-tiff/iSummicron/releases.
 
 ### From source (development)
 
@@ -46,7 +46,7 @@ With conda:
 
 ```bash
 git clone https://github.com/chuang44-tiff/iSummicron.git && cd iSummicron
-git checkout v0.3.0
+git checkout v0.4.0
 conda env create -f environment.yml && conda activate isummicron
 pip install -e '.[heic,depth,hdr-macos,eval-quality,dev]'
 ```
@@ -78,18 +78,24 @@ Download the sample Portrait HEIC from this release and verify it:
 
 ```bash
 mkdir -p iphoneImage && cd iphoneImage
-curl -LO https://github.com/chuang44-tiff/iSummicron/releases/download/v0.3.0/Demo_input.HEIC
-curl -LO https://github.com/chuang44-tiff/iSummicron/releases/download/v0.3.0/SHA256SUMS
+curl -LO https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/Demo_input.HEIC
+curl -LO https://github.com/chuang44-tiff/iSummicron/releases/download/v0.4.0/SHA256SUMS
 shasum -a 256 -c --ignore-missing SHA256SUMS && cd ..
 ```
 
 The sample has its location and time metadata stripped and shows a person; the release notes list what metadata remains. Then render it:
 
 ```bash
-isummicron render --image iphoneImage/Demo_input.HEIC --focus-xy 0.40 0.39 --depth-source lidar --depth-scale 10 --downres 2048 --psf-norm l1 --hdr-source macos --out-dir runs/render
+isummicron render --image iphoneImage/Demo_input.HEIC --focus-xy 0.40 0.39 --depth-source lidar --downres 2048 --psf-norm l1 --hdr-source macos --out-dir runs/render
 ```
 
-This takes about 25–30 s on an Apple Silicon Mac (dev machine) and writes `runs/render/Demo_input_r2048_rendered_ds10.0.jpg` and a `.png`. Native 5712×4284 takes about 5–6 minutes and about 5.4 GB measured (the memory guard's conservative estimate is about 9.4 GiB, under the 12 GiB default); set `ISUMMICRON_MAX_BYTES` to change the memory guard. Without `--out-dir`, output goes to `./runs/render`.
+This takes about 35 s on an Apple Silicon Mac (dev machine) and writes a `.jpg` and a `.png` into `runs/render`. Native 5712×4284 takes a few minutes and about 5.4 GB of RAM (the memory guard's conservative estimate is about 9.4 GiB, under the 12 GiB default); set `ISUMMICRON_MAX_BYTES` to change the memory guard. Without `--out-dir`, output goes to `./runs/render`.
+
+What the flags do:
+
+- `--depth-source lidar` reads LiDAR depth from the HEIC's auxiliary image (strict: it errors without one). The default is `auto`: LiDAR when the HEIC carries a depth image, otherwise monocular depth with a note. The default look also refines the depth with a guided filter and maps it through a reciprocal (diopter) curve.
+- `--hdr-source macos` loads the HDR gain map, so specular highlights keep their headroom through the render. The default is `auto` (the gain map when the macOS loader and the data are present, otherwise SDR with a note). With `--tonemap auto` the final tone follows the input photo's own SDR tone through a measured luma lookup table (`input-lut`); pass `--tonemap ci` for the Apple Core Image tonemap instead.
+- `--psf-norm l1` (the default) keeps the kernels L1-normalized.
 
 `isummicron render --help` lists every flag; `python -m summicron.render.convolve` accepts the identical set.
 
@@ -108,14 +114,27 @@ Without `--focus-xy`, the closest subject is in focus.
 | --- | --- |
 | `--focus-xy X Y` | In-focus point, normalized. |
 | `--downres N` | Long edge in pixels. 2048 is the fast preview. |
-| `--depth-source` | `lidar` (Portrait HEIC, default) or `monocular` (Depth Anything V2 Small). |
-| `--depth-scale` | Multiplier on the depth map before focusing. The quick start uses 10. |
-| `--hdr-source` | `macos` keeps highlight headroom (macOS only); `none` is the 8-bit load. |
+| `--depth-source` | `auto` (default: LiDAR when the HEIC has a depth image, else monocular), `lidar` (strict), or `monocular` (Depth Anything V2 Small). |
+| `--depth-scale` | Multiplier on the depth map in meters (only the old linear depth mapping uses it; the default diopter mapping ignores it). |
+| `--hdr-source` | `auto` (default) or `macos`: keep highlight headroom (macOS only); `none` is the 8-bit load. |
 | `--out-dir`, `--output` | Output directory, or one exact output file. |
 | `--occlusion-compositing` | `on` removes halos at depth edges (off by default, slower). |
 | `--tensor` | Use your own PSF tensor (see below). |
 
 Full list: [docs/cli-reference.md](docs/cli-reference.md).
+
+### Experimental flags
+
+These are experimental and off by default; the default output is unchanged. They may change or go away in a later release.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--kernel-family {codev,synthetic}` | `codev` | `synthetic` builds physically sized round defocus discs around the CODE V aberration PSF at run time. Needs LiDAR depth and `--psf-norm l1`; not combinable with `--tensor`. |
+| `--lens-aperture-mm MM` | `17.5` (synthetic) | Synthetic only: entrance-pupil diameter, 3-30 mm, or a preset `35/2` (17.5), `50/2` (25), `apple` (13.5). |
+| `--bright-stamp {auto,peak,l1}` | `auto` | Bright-pass stamp: `auto` is `peak` (codev) or `l1` (synthetic). |
+| `--bright-stamp-gain G` | `2.0` under `l1` | Gain of the `l1` stamp, in (0, 16]. |
+
+The synthetic family is cached at `~/Library/Caches/isummicron/synth` (override with `ISUMMICRON_CACHE_DIR`); nothing is written into the installed package. The synthetic discs are round, so they carry no cat-eye shape.
 
 ## Documentation
 
@@ -128,7 +147,7 @@ Full list: [docs/cli-reference.md](docs/cli-reference.md).
 
 ## How it works
 
-The pipeline loads the image and its LiDAR depth, then anchors depth so the tapped pixel lands on the tensor's in-focus slice. Each pixel gets a kernel blended from its radial position (8 angular wedges rotate each kernel with the pixel's azimuth) and its depth slab. Depth slabs are gathered and composited in linear light, and the output is tonemapped to SDR.
+The pipeline loads the image and its depth (LiDAR when present), refines it with a guided filter, maps it through a reciprocal (diopter) curve, then anchors depth so the tapped pixel lands on the tensor's in-focus slice. Each pixel gets a kernel blended from its radial position (8 angular wedges rotate each kernel with the pixel's azimuth) and its depth slab. Depth slabs are gathered and composited in linear light, and the output is tonemapped to SDR.
 
 ## Bring your own PSF tensor
 

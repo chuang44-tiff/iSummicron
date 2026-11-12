@@ -10,16 +10,20 @@ FAST tests (always run):
 - Wheel-shipped tensor bytes md5 == ``TENSOR_MD5``.
 - ``--layered-gather`` flag is REMOVED from argparse (P1.10.4 C5).
 
-SLOW test (``-m slow``, 4 cases — CLI-1a B2.4):
+SLOW test (``-m slow``, 6 cases — CLI-1a B2.4 + Run 6):
 - Re-run the canonical IMG_6915 bench (argv built from ``CANONICAL_FLAGS``,
   default tensor) via both entrypoints x {OFF, ``--occlusion-compositing on``}
-  and assert output md5 == ``G1_MD5`` / ``ON_MD5``. On failure the
+  and assert output md5 == ``G1_MD5`` / ``ON_MD5``.
+- Run 6 (G2): ``off_old`` / ``on_old`` (convolve only) re-run the PRE-flip
+  look via ``CANONICAL_FLAGS_OLD`` and assert ``G1_MD5_OLD`` / ``ON_MD5_OLD``:
+  the old look stays reachable through explicit flags. On failure the
   message carries macOS build, pyobjc version, tensor md5 and max-abs vs
   the baseline (if present) so OS drift explains itself.
 """
 from __future__ import annotations
 
 import hashlib
+import os
 import platform
 import sys
 import subprocess
@@ -32,8 +36,11 @@ from summicron.render._bench import (
     CANONICAL_FLAGS,
     G1_FOCUS_XY,
     G1_IMAGE,
+    CANONICAL_FLAGS_OLD,
     G1_MD5,
+    G1_MD5_OLD,
     ON_MD5,
+    ON_MD5_OLD,
     TENSOR_MD5,
 )
 
@@ -41,7 +48,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BASELINE_JPG = ROOT / "runs" / "vibe_bench" / "IMG_6915_R2_layered.jpg"
 CANONICAL_IMAGE = ROOT / G1_IMAGE
 RESTORE_CMD = (
-    "cp runs/vibe_bench/IMG_6915_G1_baseline_delta.jpg "
+    "cp runs/vibe_bench/IMG_6915_G1_baseline_s20.jpg "
     "runs/vibe_bench/IMG_6915_R2_layered.jpg"
 )
 
@@ -175,10 +182,23 @@ _ENTRYPOINTS = {
     "convolve": [sys.executable, "-m", "summicron.render.convolve"],
     "isummicron": [str(Path(sys.executable).parent / "isummicron"), "render"],
 }
+_ON = ("--occlusion-compositing", "on")
+# mode -> (extra argv, expected md5, canonical flags)
 _MODES = {
-    "off": ((), G1_MD5),
-    "on": (("--occlusion-compositing", "on"), ON_MD5),
+    "off": ((), G1_MD5, CANONICAL_FLAGS),
+    "on": (_ON, ON_MD5, CANONICAL_FLAGS),
+    "off_old": ((), G1_MD5_OLD, CANONICAL_FLAGS_OLD),
+    "on_old": (_ON, ON_MD5_OLD, CANONICAL_FLAGS_OLD),
 }
+_LABEL = {"off": "G1", "on": "ON", "off_old": "G1-old", "on_old": "ON-old"}
+_CASES = [
+    pytest.param(ep, mode, id=f"{ep}-{mode}")
+    for mode in ("off", "on")
+    for ep in _ENTRYPOINTS
+] + [
+    pytest.param("convolve", "off_old", id="convolve-off_old"),
+    pytest.param("convolve", "on_old", id="convolve-on_old"),
+]
 
 
 def test_backcompat_canonical_render_matches_baseline(
@@ -199,18 +219,22 @@ def test_backcompat_canonical_render_matches_baseline(
     if entrypoint == "isummicron" and not Path(_ENTRYPOINTS["isummicron"][0]).exists():
         pytest.skip("isummicron console script not installed next to sys.executable")
 
-    extra, expected = _MODES[mode]
+    extra, expected, flags = _MODES[mode]
     out_path = tmp_path / f"IMG_6915_{entrypoint}_{mode}.jpg"
     cmd = [
         *_ENTRYPOINTS[entrypoint],
         "--image", G1_IMAGE,
-        *CANONICAL_FLAGS,
+        *flags,
         "--focus-xy", *(str(v) for v in G1_FOCUS_XY),
         "--output", str(out_path),
         *extra,
     ]
+    # PYTHONPATH pins the checkout under test: the ``isummicron`` console
+    # script of an editable install may resolve ``summicron`` elsewhere.
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
     result = subprocess.run(
-        cmd, capture_output=True, text=True, cwd=str(ROOT), timeout=900
+        cmd, capture_output=True, text=True, cwd=str(ROOT), timeout=900,
+        env=env,
     )
     if result.returncode != 0:
         pytest.fail(
@@ -221,7 +245,7 @@ def test_backcompat_canonical_render_matches_baseline(
     assert out_path.exists(), f"render produced no output at {out_path}"
     got = _md5(out_path)
     assert got == expected, (
-        f"{'G1' if mode == 'off' else 'ON'} FAIL via {entrypoint}: render md5 "
+        f"{_LABEL[mode]} FAIL via {entrypoint}: render md5 "
         f"{got} != {expected}\n"
         f"argv: {' '.join(cmd)}\n{_env_diagnostics(out_path)}"
     )
@@ -235,8 +259,7 @@ test_backcompat_canonical_render_matches_baseline.__test__ = False
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("mode", list(_MODES))
-@pytest.mark.parametrize("entrypoint", list(_ENTRYPOINTS))
+@pytest.mark.parametrize("entrypoint,mode", _CASES)
 def test_backcompat_canonical_render_md5(tmp_path, entrypoint, mode):
     """CLI-1a B2.4 — {convolve, isummicron} x {OFF, ON}."""
     test_backcompat_canonical_render_matches_baseline(tmp_path, entrypoint, mode)

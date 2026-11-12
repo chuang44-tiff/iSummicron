@@ -90,6 +90,42 @@ _BRIGHT_KNEE = 0.20
 # defocus ratio below this snap to the in-focus (identity) kernel.
 D_KNEE_LAYERED = 0.10
 
+# S22 S1: the same knee expressed physically (diopters). 0.10 on the shipped
+# 11-node geometric axis IS the diopter offset of node 1:
+# 1/0.7 - 1/object_distances_m[1] (a rounded 0.407 would move every pin).
+KNEE_DIOPTER = 0.4069058433696242
+_SYNTH_FAMILY_NAME = "synthetic_disc_v0"
+
+
+def _physical_knee_ratio(
+    object_distances_m, defocus_ratios, focus_m, knee_diopter=KNEE_DIOPTER
+) -> float:
+    """Identity-snap knee as a defocus-ratio: where ``knee_diopter`` of
+    defocus sits on the tensor's own axis (clamped to the axis by ``np.interp``).
+
+    On the shipped geometric axis this is exactly ``D_KNEE_LAYERED``; on the
+    16-node uniform-diopter synthetic family it is ~0.2952 (the ratio-0.10
+    knee would protect only 0.14 D there).
+    """
+    od = np.asarray(object_distances_m, dtype=np.float64)
+    ratios = np.asarray(defocus_ratios, dtype=np.float64)
+    knee = float(np.interp(knee_diopter, 1.0 / float(focus_m) - 1.0 / od, ratios))
+    if not knee > 0.0:
+        # Degenerate axis (first node already beyond the knee diopter): a zero
+        # knee gives dmap/0 -> NaN alpha. Fall back to the codev knee.
+        return D_KNEE_LAYERED
+    return knee
+
+
+def _bright_stamp(rotated, gain):
+    """Bright-pass stamp kernel. ``gain is None`` = peak stamp (today's
+    arithmetic, verbatim: the divide, NOT a reciprocal multiply). A float
+    ``gain`` = L1 stamp: the L1-normalised kernel times ``gain`` (energy
+    conserving; ``rotated`` is L1 = 1 under ``psf_norm l1``)."""
+    if gain is None:
+        return rotated / max(float(rotated.max()), 1e-10)
+    return rotated * np.float32(gain)
+
 
 
 # ---------------------------------------------------------------------------
@@ -256,9 +292,16 @@ def load_image(path: str | Path) -> np.ndarray:
     except ImportError:
         pass  # Pillow alone handles JPEG/PNG
 
-    with Image.open(str(path)) as im:
-        im = im.convert("RGB")
-        arr = np.asarray(im, dtype=np.uint8)
+    try:
+        with Image.open(str(path)) as im:
+            im = im.convert("RGB")
+            arr = np.asarray(im, dtype=np.uint8)
+    except Image.UnidentifiedImageError as exc:
+        # PIL.UnidentifiedImageError is an OSError the CLI contract does not
+        # map; surface it as the one-line `render:` ValueError.
+        raise ValueError(
+            f"cannot decode image {path}: {' '.join(str(exc).split())}"
+        ) from exc
     return arr.astype(np.float32) / 255.0
 
 
@@ -908,6 +951,10 @@ def load_tensor(path: str | Path) -> dict:
         "focus_distance_m": focus_distance_m,
         "R": R,
         "D": D,
+        # S22 S1: synthetic-family tag (None for CodeV tensors).
+        "synth_family": (
+            str(data["synth_family"]) if "synth_family" in data.files else None
+        ),
     }
 
 
@@ -1303,8 +1350,12 @@ def _apply_kernel(
     output, output_bright, weight_sum, delta_weight_sum,
     *,
     fft_state: dict | None = None,
+    bright_stamp_gain: float | None = None,
 ):
     """Apply kernel_base via the is_delta/angular-scatter body.
+
+    S22 S1: ``bright_stamp_gain`` selects the bright-pass stamp (None = peak
+    stamp, today's arithmetic; a float = L1 stamp ``rotated * gain``).
 
     P1.10.4 C3: now exclusively serves the basis scatter paths
     (`_scatter_one_slab_fixed_d_basis`).
@@ -1344,7 +1395,7 @@ def _apply_kernel(
                     rotated /= rotated.sum() + 1e-12
                 else:
                     rotated /= max(float(rotated.max()), 1e-10)
-                rotated_bright = rotated / max(float(rotated.max()), 1e-10)
+                rotated_bright = _bright_stamp(rotated, bright_stamp_gain)
                 for c in range(3):
                     conv_d = fftconvolve(
                         img_diffuse_padded[:, :, c], rotated, mode="same"
@@ -1389,7 +1440,7 @@ def _apply_kernel(
                 rotated /= rotated.sum() + 1e-12
             else:
                 rotated /= max(float(rotated.max()), 1e-10)
-            rotated_bright = rotated / max(float(rotated.max()), 1e-10)
+            rotated_bright = _bright_stamp(rotated, bright_stamp_gain)
             # Pre-FFT the (potentially-different) rotated_bright kernel
             # only when the post-rotate normalization actually diverges
             # — which it does iff `psf_norm == "l1"` AND the L1 sum and
@@ -1428,6 +1479,7 @@ def _scatter_one_slab_fixed_d_basis(
     cancel: threading.Event | None = None,
     *,
     fft_state: dict | None = None,
+    bright_stamp_gain: float | None = None,
 ):
     """P1.10.1 per-pixel radial-basis scatter — layered (fixed-D) path.
 
@@ -1460,7 +1512,7 @@ def _scatter_one_slab_fixed_d_basis(
             kernel_base, w, img_full_pad, img_diffuse_pad, img_bright_pad,
             wedge_idx, pad, H, W, psf_norm,
             output, output_bright, weight_sum, delta_weight_sum,
-            fft_state=fft_state,
+            fft_state=fft_state, bright_stamp_gain=bright_stamp_gain,
         )
 
 
@@ -1472,6 +1524,8 @@ def _layered_gather_diffuse(
     kH, kW, pad, pix_scale, scaled_ksize, psf_norm, H, W,
     fft_state, slab_batch_size, on_progress, cancel,
     emit_log=True,
+    bright_stamp_gain=None,
+    active_slab_cap=None,
 ):
     """The P1.12 depth-layered-gather diffuse assembly — the LIVE OFF path.
 
@@ -1521,7 +1575,10 @@ def _layered_gather_diffuse(
     best_d_color_d = np.zeros((H, W, 3), dtype=np.float32)
     best_d_color_b = np.zeros((H, W, 3), dtype=np.float32)
 
-    effective_cap = max(_MAX_ACTIVE_SLABS, D_gate // 2)
+    effective_cap = (
+        max(_MAX_ACTIVE_SLABS, D_gate // 2) if active_slab_cap is None
+        else int(active_slab_cap)
+    )
     n_batches = (D_gate + batch_size - 1) // batch_size
     if batch_size * n_batches > max(effective_cap * 4, D_gate * 4):
         raise ValueError(
@@ -1582,6 +1639,7 @@ def _layered_gather_diffuse(
                     weight_sum=wsum_d, delta_weight_sum=delta_wsum_d,
                     cancel=cancel,
                     fft_state=fft_state,
+                    bright_stamp_gain=bright_stamp_gain,
                 )
 
             # Per-slab normalize by spatial-slab weight_sum (radial partition).
@@ -1672,6 +1730,7 @@ def render(
     on_progress: _OnProgress = None,
     cancel: threading.Event | None = None,
     stats: dict | None = None,
+    bright_stamp_gain: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Bin-and-convolve render pipeline.
 
@@ -1682,7 +1741,14 @@ def render(
     ``alpha`` ((H, W) identity-snap alpha), ``dmap`` ((H, W) defocus map) and
     ``img_lin`` ((H, W, 3) linear reference input); ``defocus_ratios`` is
     surfaced by ``_run_render_pipeline`` via its private ``_eval_sink``, not
-    by this ``stats`` dict. The return arity stays 2.
+    by this ``stats`` dict. The return arity stays 2. S22 S1 adds
+    ``knee_ratio`` (float): the identity-snap knee used (``D_KNEE_LAYERED`` for
+    CodeV tensors, the physical-diopter knee for a ``synthetic_disc_v0``
+    tensor, see ``_physical_knee_ratio``).
+
+    ``bright_stamp_gain`` (S22 S1): ``None`` (default) = peak stamp for the
+    bright pass (today's arithmetic, bit-identical); a positive finite float =
+    L1 stamp (``kernel * gain``; requires ``psf_norm="l1"``).
 
     Parameters
     ----------
@@ -1745,6 +1811,20 @@ def render(
         raise ValueError(
             f"psf_norm must be 'l1' or 'peak'; got {psf_norm!r}"
         )
+
+    if bright_stamp_gain is not None:
+        if (
+            isinstance(bright_stamp_gain, bool)
+            or not isinstance(bright_stamp_gain, (int, float, np.integer, np.floating))
+            or not np.isfinite(bright_stamp_gain)
+            or not bright_stamp_gain > 0
+        ):
+            raise ValueError(
+                f"bright_stamp_gain must be a positive finite number or None, "
+                f"got {bright_stamp_gain!r}"
+            )
+        if psf_norm != "l1":
+            raise ValueError("bright_stamp_gain requires psf_norm='l1'")
 
     # CLI-1a A3.1b: kernel-L1 guard on the raw tensor (replaces the deleted
     # split-energy gate's only unique catch). Zero slices are exempt.
@@ -2011,6 +2091,13 @@ def render(
     # the old pre-dispatch zeros were dead (both branches rebind all four from
     # the helper's tuple). weight_sum / delta_weight_sum track the is_delta
     # branch weight so the diffuse energy gate has the right denominator.
+    # S22 S1: the synthetic family has D=16 uniform-diopter slabs and a normal
+    # scene legitimately touches most of them; the "pathological depth spread"
+    # warning (cap max(8, D//2), tuned for the 11-node geometric axis) would
+    # fire on every render. For that family the cap is D itself (never warns).
+    active_slab_cap = (
+        int(tensor["D"]) if tensor.get("synth_family") == _SYNTH_FAMILY_NAME else None
+    )
     if occlusion_compositing == "on":
         # R-occlusion-layering ON branch — single dispatch to the parallel
         # _layered_composite() helper. The OFF path (the slab loop below) stays
@@ -2048,6 +2135,8 @@ def render(
             slab_batch_size=slab_batch_size,
             cancel=cancel,
             on_progress=on_progress,
+            bright_stamp_gain=bright_stamp_gain,
+            active_slab_cap=active_slab_cap,
         )
         if stats is not None:
             stats["acc_alpha"] = acc_alpha
@@ -2078,7 +2167,8 @@ def render(
             scaled_ksize=scaled_ksize, psf_norm=psf_norm, H=H, W=W,
             fft_state=fft_state, slab_batch_size=slab_batch_size,
             on_progress=on_progress, cancel=cancel,
-            emit_log=True,
+            emit_log=True, bright_stamp_gain=bright_stamp_gain,
+            active_slab_cap=active_slab_cap,
         )
         if stats is not None:
             stats["acc_alpha"] = acc_alpha
@@ -2168,18 +2258,37 @@ def render(
     # the smoothstep POU spreads weight across ~4 non-identity bins; this
     # snap restores sharpness at the focal plane while preserving the
     # layered composite elsewhere. `output` here = diffuse + bright.
-    alpha = (np.cos(0.5 * np.pi * np.minimum(dmap / D_KNEE_LAYERED, 1.0)) ** 2).astype(np.float32)
+    # S22 S1: the knee is keyed on the tensor's own metadata. CodeV tensors
+    # (no ``synth_family`` key) use the D_KNEE_LAYERED object itself, so the
+    # codev arithmetic is unchanged; the synthetic family converts the same
+    # 0.407 D protection to its own (uniform-diopter) axis.
+    if tensor.get("synth_family") == _SYNTH_FAMILY_NAME:
+        knee = _physical_knee_ratio(
+            tensor["object_distances_m"], tensor["defocus_ratios"],
+            tensor.get("focus_distance_m") or 0.7,
+        )
+    else:
+        knee = D_KNEE_LAYERED
+    alpha = (np.cos(0.5 * np.pi * np.minimum(dmap / knee, 1.0)) ** 2).astype(np.float32)
     output = alpha[:, :, None] * img_lin + (1.0 - alpha[:, :, None]) * output
     if np.any(np.isnan(output)):
         raise RuntimeError("Gate FAIL: NaN in layered output")
     if stats is not None:
         stats["alpha_mean"] = float(alpha.mean())
+        stats["knee_ratio"] = float(knee)
         # Q-a: references only (no copy, no arithmetic) for the paired
         # quality gates; popped by _run_render_pipeline.
         stats["alpha"] = alpha
         stats["dmap"] = dmap
         stats["img_lin"] = img_lin
-    _emit(on_progress, f"  α-blend: D_KNEE_LAYERED={D_KNEE_LAYERED}, alpha_mean={float(alpha.mean()):.3f} (layered identity snap)")
+    if knee is D_KNEE_LAYERED:
+        _emit(on_progress, f"  α-blend: D_KNEE_LAYERED={D_KNEE_LAYERED}, alpha_mean={float(alpha.mean()):.3f} (layered identity snap)")
+    else:
+        _emit(
+            on_progress,
+            f"  α-blend: knee={knee:.4f} ({KNEE_DIOPTER:.3f} D physical), "
+            f"alpha_mean={float(alpha.mean()):.3f} (layered identity snap)",
+        )
 
     output_linear = output.copy()
 
@@ -2202,7 +2311,8 @@ def render(
 
 def save_results(output_u8: np.ndarray, input_stem: str, out_dir: Path,
                   depth_scale: float = 1.0,
-                  downres: int | None = None) -> Path:
+                  downres: int | None = None,
+                  name_suffix: str = "") -> Path:
     """Save rendered image as JPEG (q95) and PNG; returns the JPEG path."""
     from PIL import Image
 
@@ -2210,7 +2320,7 @@ def save_results(output_u8: np.ndarray, input_stem: str, out_dir: Path,
     img = Image.fromarray(output_u8, mode="RGB")
 
     downres_tag = f"_r{downres}" if downres is not None else ""
-    suffix = f"_ds{depth_scale}" if depth_scale != 1.0 else ""
+    suffix = (f"_ds{depth_scale}" if depth_scale != 1.0 else "") + name_suffix
     jpg_path = out_dir / f"{input_stem}{downres_tag}_rendered{suffix}.jpg"
     png_path = out_dir / f"{input_stem}{downres_tag}_rendered{suffix}.png"
 
@@ -2262,6 +2372,30 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error(str(e))
 
 
+def _monocular_depth(image_srgb, load_depth_model, estimate_depth, *, fallback):
+    """Relative [0, 1] monocular depth (FAR_M = 1.0), with the one-line
+    error contract: any ``Exception`` from the model load/inference (missing
+    ``[depth]`` extra, offline HF) becomes a ``ValueError`` naming the fix."""
+    try:
+        bundle = load_depth_model(device="mps")
+        depth_01 = estimate_depth(image_srgb, bundle)
+    except Exception as exc:
+        if isinstance(exc, (NotImplementedError, RecursionError)):
+            raise
+        cause = f"{type(exc).__name__}: {' '.join(str(exc).split())}"
+        lead = (
+            "image has no LiDAR depth; monocular fallback failed"
+            if fallback else "monocular depth failed"
+        )
+        raise ValueError(
+            f"{lead}: {cause} (use a Portrait HEIC with --depth-source "
+            "lidar, or pip install isummicron[depth] and allow the model "
+            "download)"
+        ) from exc
+    FAR_M = 1.0
+    return (depth_01 * FAR_M).astype(np.float32)
+
+
 def _run_render_pipeline(
     opts,
     *,
@@ -2286,8 +2420,11 @@ def _run_render_pipeline(
     from summicron.render.api import RenderDiagnostics, RenderResult
 
     image_path = Path(opts.image_path)
+    from summicron.render._resolve import resolve_family
+    fam = resolve_family(opts)
+    synthetic = fam.kernel_family == "synthetic"
     tensor_path = Path(opts.tensor_path) if opts.tensor_path is not None else None
-    if tensor_path is None:
+    if tensor_path is None and not synthetic:
         # P1.audit Item 7: fall back to the wheel-shipped canonical tensor.
         from summicron.render._artifacts import default_tensor_path
         tensor_path = default_tensor_path()
@@ -2297,17 +2434,63 @@ def _run_render_pipeline(
     depth_scale = float(opts.depth_scale)
     warnings_collected: list[str] = []
 
-    _emit(on_progress, f"Loading image: {image_path}")
-    if opts.hdr_source == "macos":
-        from summicron.io.hdr_load_macos import load_hdr_heic
-        image_srgb = load_hdr_heic(image_path)
+    # Rev 3: resolve --hdr-source auto once, before the image load.
+    from summicron.render import _hdr_detect as _hl
+    from summicron.render._resolve import resolve_hdr_source
+    hdr_src, _hdr_note = resolve_hdr_source(
+        opts.hdr_source,
+        loader_available=(
+            opts.hdr_source != "auto" or _hl.macos_hdr_loader_available()
+        ),
+        has_hdr_data=(
+            opts.hdr_source != "auto" or _hl.has_hdr_gainmap(image_path)
+        ),
+    )
+    _hdr_loaded = None
+    _announced = False
+    if hdr_src == "macos" and opts.hdr_source == "auto":
+        # find_spec can say yes while the import is broken (bad pyobjc).
+        _emit(on_progress, f"Loading image: {image_path}")
+        _announced = True
+        try:
+            from summicron.io.hdr_load_macos import load_hdr_heic
+            _hdr_loaded = load_hdr_heic(image_path)
+        except ImportError as _e:
+            hdr_src = "none"
+            _hdr_note = (
+                "note: hdr_source auto -> none "
+                f"(HDR loader import failed: {_e})"
+            )
+    if hdr_src == "none" and opts.hdr_source == "auto":
+        _why = (_hdr_note or "").partition("(")[2].rpartition(")")[0]
+        if opts.tonemap == "input-lut":
+            raise ValueError(
+                "--tonemap input-lut needs an HDR input: --hdr-source auto "
+                f"resolved to none ({_why}); pass a gain-map HEIC on macOS"
+            )
+        if opts.shadow_match_mode == "on":
+            raise ValueError(
+                "--shadow-match-mode on needs an HDR input: --hdr-source auto "
+                f"resolved to none ({_why}); pass a gain-map HEIC on macOS"
+            )
+    if _hdr_note is not None:
+        _emit(on_progress, _hdr_note)
+
+    if _hdr_loaded is not None:
+        image_srgb = _hdr_loaded
     else:
-        image_srgb = load_image(image_path)
+        if not _announced:
+            _emit(on_progress, f"Loading image: {image_path}")
+        if hdr_src == "macos":
+            from summicron.io.hdr_load_macos import load_hdr_heic
+            image_srgb = load_hdr_heic(image_path)
+        else:
+            image_srgb = load_image(image_path)
 
     # P1.13 K11 LDR-ref capture (see original main() comment).
     ldr_ref_linear = None
     if opts.shadow_match_mode == "on":
-        if opts.hdr_source == "macos":
+        if hdr_src == "macos":
             ldr_srgb = load_image(image_path)
             ldr_ref_linear = srgb_to_linear(ldr_srgb)
         else:
@@ -2325,27 +2508,36 @@ def _run_render_pipeline(
         ):
             ldr_ref_linear = downres_array(ldr_ref_linear, opts.downres)
 
-    _emit(on_progress, f"Loading tensor: {tensor_path}")
-    tensor = load_tensor(tensor_path)
+    def _resolve_focus_target(tensor):
+        focus_target_m = opts.focus_target_m
+        if focus_target_m is None:
+            focus_target_m = (
+                tensor["focus_distance_m"]
+                if tensor["focus_distance_m"] is not None
+                else 0.7
+            )
+        elif (
+            tensor["focus_distance_m"] is not None
+            and focus_target_m != tensor["focus_distance_m"]
+        ):
+            msg = (
+                f"Warning: --focus-target-m={focus_target_m} != tensor "
+                f"focus_distance_m={tensor['focus_distance_m']}; "
+                "subject may not be sharp"
+            )
+            _emit(on_progress, msg)
+            warnings_collected.append(msg)
+        return focus_target_m
 
-    focus_target_m = opts.focus_target_m
-    if focus_target_m is None:
-        focus_target_m = (
-            tensor["focus_distance_m"]
-            if tensor["focus_distance_m"] is not None
-            else 0.7
-        )
-    elif (
-        tensor["focus_distance_m"] is not None
-        and focus_target_m != tensor["focus_distance_m"]
-    ):
-        msg = (
-            f"Warning: --focus-target-m={focus_target_m} != tensor "
-            f"focus_distance_m={tensor['focus_distance_m']}; "
-            "subject may not be sharp"
-        )
-        _emit(on_progress, msg)
-        warnings_collected.append(msg)
+    if synthetic:
+        # S22 S1: the family is built/loaded AFTER resolve_auto (below); nothing
+        # before apply_tap_focus_shift reads the tensor.
+        tensor = None
+        focus_target_m = None
+    else:
+        _emit(on_progress, f"Loading tensor: {tensor_path}")
+        tensor = load_tensor(tensor_path)
+        focus_target_m = _resolve_focus_target(tensor)
 
     from summicron.depth.estimate import (
         extract_lidar_depth,
@@ -2353,37 +2545,169 @@ def _run_render_pipeline(
         load_depth_model,
         estimate_depth,
     )
+    from summicron.render._resolve import resolve_auto
     H, W = image_srgb.shape[:2]
-    if opts.depth_source == "lidar":
+    depth_m = None
+    if opts.depth_source in ("auto", "lidar"):
         _emit(on_progress, f"Extracting LiDAR depth (target={H}x{W})...")
-        depth_m = extract_lidar_depth(image_path, target_hw=(H, W))
-        if depth_m is None:
-            raise ValueError(
-                "--depth-source=lidar but image has no embedded depth aux."
-            )
-    else:
+        try:
+            if opts.depth_guided in ("auto", "on"):
+                depth_m = extract_lidar_depth(
+                    image_path, target_hw=(H, W), depth_guided="on"
+                )
+            else:
+                depth_m = extract_lidar_depth(image_path, target_hw=(H, W))
+        except (TypeError, NotImplementedError, RecursionError):
+            raise
+        except Exception:
+            # auto on a non-HEIC (PNG/JPEG) input: the HEIF opener fails, which
+            # just means "no LiDAR". Real HEIC errors and explicit lidar raise.
+            if opts.depth_source == "lidar" or image_path.suffix.lower() in (
+                ".heic", ".heif"
+            ):
+                raise
+            depth_m = None
+    # tonemap auto needs the headroom of the loaded (post-downres) buffer.
+    # Finite-only max: a +Inf pixel must not select input-lut (fit_input_tone
+    # rejects non-finite data); any non-finite pixel resolves auto -> ci.
+    hdr_nonfinite = False
+    hdr_headroom = False
+    if opts.tonemap == "auto" and hdr_src != "none":
+        _fin = np.isfinite(image_srgb)
+        hdr_nonfinite = not bool(_fin.all())
+        hdr_headroom = (not hdr_nonfinite) and float(image_srgb.max()) > 1.001
+        del _fin
+    modes = resolve_auto(
+        opts, has_lidar=depth_m is not None, hdr_headroom=hdr_headroom,
+        hdr_source=hdr_src, nonfinite=hdr_nonfinite,
+    )
+    for _note in modes.notes:
+        _emit(on_progress, _note)
+    for _w in modes.warnings:
+        warnings.warn(_w, RuntimeWarning, stacklevel=2)
+        _emit(on_progress, f"Warning: {_w}")
+        warnings_collected.append(_w)
+    if modes.any_auto:
+        _emit(on_progress, modes.resolved_line())
+    if synthetic:
+        from summicron.render import _family
+        tensor, _fam_path, _fam_hit = _family.load_family_tensor(
+            fam.lens_aperture_mm, on_progress=on_progress
+        )
+        _emit(
+            on_progress,
+            f"Loading synthetic family: A={fam.lens_aperture_mm:g} mm "
+            f"({'cache hit' if _fam_hit else 'built'}): {_fam_path}",
+        )
+        focus_target_m = _resolve_focus_target(tensor)
+    if depth_m is None:  # resolved monocular
         _emit(on_progress, f"Running Depth Anything V2 (target={H}x{W})...")
-        bundle = load_depth_model(device="mps")
-        depth_01 = estimate_depth(image_srgb, bundle)
-        FAR_M = 1.0
-        depth_m = (depth_01 * FAR_M).astype(np.float32)
+        depth_m = _monocular_depth(
+            image_srgb, load_depth_model, estimate_depth,
+            fallback=opts.depth_source == "auto",
+        )
     focus_xy = tuple(opts.focus_xy) if opts.focus_xy is not None else None
-    depth_m_scaled = depth_m * depth_scale
-    shifted_m, anchor_m = apply_tap_focus_shift(
-        depth_m_scaled, focus_xy, focus_target_m
-    )
-    _emit(
-        on_progress,
-        f"  raw_anchor_m={anchor_m/depth_scale:.4f} "
-        f"scaled_anchor_m={anchor_m:.4f} "
-        f"focus_target_m={focus_target_m:.4f}",
-    )
-    depth_m_arr = shifted_m
+    save_depth_scale = depth_scale
+    name_suffix = "_gd" if modes.depth_guided == "on" else ""
+    if modes.depth_mapping == "linear":
+        depth_m_scaled = depth_m * depth_scale
+        shifted_m, anchor_m = apply_tap_focus_shift(
+            depth_m_scaled, focus_xy, focus_target_m
+        )
+        _emit(
+            on_progress,
+            f"  raw_anchor_m={anchor_m/depth_scale:.4f} "
+            f"scaled_anchor_m={anchor_m:.4f} "
+            f"focus_target_m={focus_target_m:.4f}",
+        )
+        depth_m_arr = shifted_m
+    else:  # diopter: consumes UNSCALED metres (S1 spec 3.1/3.2)
+        from summicron.depth.diopter import auto_gain, diopter_equivalent_depth
+
+        if depth_scale != 1.0:
+            _msg = (
+                f"--depth-scale {depth_scale} is ignored with --depth-mapping "
+                "diopter (diopter consumes unscaled metres)"
+            )
+            warnings.warn(_msg, RuntimeWarning, stacklevel=2)
+            _emit(on_progress, f"Warning: {_msg}")
+            warnings_collected.append(_msg)
+        save_depth_scale = 1.0
+        _, anchor_m = apply_tap_focus_shift(depth_m, focus_xy, focus_target_m)
+        od = tensor["object_distances_m"]
+        if focus_target_m >= float(od[-1]):
+            raise ValueError(
+                f"--focus-target-m {focus_target_m:g} must be < the tensor's far "
+                f"end {float(od[-1]):g} m under --depth-mapping diopter"
+            )
+        _gain_note = ""
+        if opts.depth_gain == "auto" and synthetic:
+            # S22 S1: CoC = 1.365*A*g*dp, so g and A are degenerate; the family
+            # is linear in dp and never saturates -> physical gain 1.0.
+            g = 1.0
+            _gain_note = " (synthetic: physical)"
+        elif opts.depth_gain == "auto":
+            g = auto_gain(depth_m, anchor_m, z_focus=focus_target_m, od=od, lo=1.0)
+        else:
+            g = float(opts.depth_gain)
+        depth_m_arr = diopter_equivalent_depth(
+            depth_m, anchor_m, gain=g, z_focus=focus_target_m,
+            z_far=float(od[-1]),
+        )
+        _emit(
+            on_progress,
+            f"  diopter: anchor_m={anchor_m:.4f} gain={g:.3f} "
+            f"cap={1/focus_target_m - 1/float(od[-1]):.4f}{_gain_note}",
+        )
+        name_suffix += f"_dio{g:.2f}"
+
+    # S1 tone fix G: --tonemap input-lut. LUT fit + threshold resolution happen
+    # only under input-lut (the default ``ci`` path does no second load).
+    lut_xs = lut_ys = lut_sat = None
+    if modes.tonemap == "input-lut":
+        from summicron.io.tone_lut import auto_bright_threshold, fit_input_tone
+        sdr_base = load_image(image_path)
+        if opts.downres is not None:
+            sdr_base = downres_array(sdr_base, opts.downres)
+        sdr_base = sdr_base.astype(np.float32)
+        if float(sdr_base.max()) > 1.5:
+            sdr_base = sdr_base / 255.0
+        sdr_base = srgb_to_linear(sdr_base)
+        if float(image_srgb.max()) <= 1.001:
+            _emit(on_progress, "  tonemap input-lut: no HDR headroom; LUT ~ identity")
+        lut_xs, lut_ys, _kx, _kk = fit_input_tone(image_srgb, sdr_base)
+        lut_sat = (_kx, _kk)
+        del sdr_base
+        _auto_thr, _h09 = auto_bright_threshold(lut_xs, lut_ys)
+        if opts.bright_pass_thresh is None or opts.bright_pass_thresh == "auto":
+            bright_thr = _auto_thr
+            _emit(
+                on_progress,
+                f"  bright-pass thr: {bright_thr:g} (auto, H(0.9)={_h09:g})",
+            )
+        else:
+            bright_thr = float(opts.bright_pass_thresh)
+        name_suffix += "_tlut"
+    else:
+        bright_thr = (
+            1.0 if opts.bright_pass_thresh in (None, "auto")
+            else float(opts.bright_pass_thresh)
+        )
+    if synthetic:
+        name_suffix += f"_synA{fam.lens_aperture_mm:g}"
+    if fam.bright_stamp_gain is not None and (synthetic or opts.bright_stamp == "l1"):
+        name_suffix += f"_l1g{fam.bright_stamp_gain:g}"
+    elif synthetic and fam.bright_stamp == "peak":
+        name_suffix += "_peak"
+    if _eval_sink is not None:
+        _eval_sink["bright_thresh"] = bright_thr
 
     _emit(
         on_progress,
-        f"Rendering (depth_scale={depth_scale}, psf_norm={opts.psf_norm}, "
-        f"hdr_source={opts.hdr_source})...",
+        f"Rendering (depth_scale="
+        f"{depth_scale if modes.depth_mapping == 'linear' else '1.0 (ignored, diopter)'}"
+        f", psf_norm={opts.psf_norm}, "
+        f"hdr_source={hdr_src})...",
     )
     render_stats: dict = {}
     render_out, output_linear = render(
@@ -2391,8 +2715,8 @@ def _run_render_pipeline(
         tensor,
         depth_m=depth_m_arr,
         psf_norm=opts.psf_norm,
-        hdr_source=opts.hdr_source,
-        bright_thresh=opts.bright_pass_thresh,
+        hdr_source=hdr_src,
+        bright_thresh=bright_thr,
         bright_pass_region_size=opts.bright_pass_region_size,
         bright_pass_floor=opts.bright_pass_floor,
         bright_pass_norm_pct=opts.bright_pass_norm_pct,
@@ -2401,6 +2725,7 @@ def _run_render_pipeline(
         on_progress=on_progress,
         cancel=cancel,
         stats=render_stats,
+        bright_stamp_gain=fam.bright_stamp_gain,
     )
 
     # Q-a: focus-fidelity metrics on the pre-shadow-match linear output.
@@ -2430,15 +2755,26 @@ def _run_render_pipeline(
         _eval_sink["defocus_ratios"] = np.asarray(
             tensor["defocus_ratios"], dtype=np.float64
         )
+        _eval_sink["knee_ratio"] = render_stats.get("knee_ratio")
+        if modes.depth_mapping == "diopter":
+            with np.errstate(divide="ignore", invalid="ignore"):
+                _eval_sink["dp"] = (
+                    1.0 / float(focus_target_m)
+                    - 1.0 / np.asarray(depth_m_arr, dtype=np.float64)
+                ).astype(np.float32)
     del _q_alpha, _q_dmap, _q_ref
 
     shadow_gains_rgb = None
     if opts.shadow_match_mode == "off":
-        if opts.hdr_source == "none":
+        if hdr_src == "none":
             output_u8 = render_out
         else:
-            from summicron.io.hdr_tonemap_macos import tonemap_core_image
-            output_u8 = tonemap_core_image(output_linear)
+            if lut_xs is not None:
+                from summicron.io.tone_lut import apply_input_lut
+                output_u8 = apply_input_lut(output_linear, lut_xs, lut_ys, lut_sat)
+            else:
+                from summicron.io.hdr_tonemap_macos import tonemap_core_image
+                output_u8 = tonemap_core_image(output_linear)
     else:
         if ldr_ref_linear is None:
             raise RuntimeError(
@@ -2492,12 +2828,13 @@ def _run_render_pipeline(
     else:
         output_path = save_results(
             output_u8, image_path.stem, out_dir,
-            depth_scale=depth_scale, downres=opts.downres,
+            depth_scale=save_depth_scale, downres=opts.downres,
+            name_suffix=name_suffix,
         )
 
     _emit(on_progress, "Done.")
 
-    mode = "hdr" if opts.hdr_source != "none" else "ldr"
+    mode = "hdr" if hdr_src != "none" else "ldr"
     # ``output_linear`` semantics:
     # - HDR path: always populated (render() returns linear float32).
     # - LDR path: ``render_out`` and ``output_linear`` are the uint8 sRGB
@@ -2513,6 +2850,24 @@ def _run_render_pipeline(
         alpha_mean=float(render_stats.get("alpha_mean", 0.0)),
         shadow_gains_rgb=shadow_gains_rgb,
         warnings=tuple(warnings_collected),
+        resolved={
+            "hdr_source": hdr_src,
+            "depth_source": modes.depth_source,
+            "depth_guided": modes.depth_guided,
+            "depth_mapping": modes.depth_mapping,
+            "tonemap": modes.tonemap,
+            "bright_pass_thresh": f"{bright_thr:g}",
+            "kernel_family": fam.kernel_family,
+            "bright_stamp": fam.bright_stamp,
+            **(
+                {"lens_aperture_mm": f"{fam.lens_aperture_mm:g}"}
+                if fam.lens_aperture_mm is not None else {}
+            ),
+            **(
+                {"bright_stamp_gain": f"{fam.bright_stamp_gain:g}"}
+                if fam.bright_stamp_gain is not None else {}
+            ),
+        },
     )
     return RenderResult(
         output_u8=output_u8,
@@ -2560,7 +2915,7 @@ def run_cli_render(run) -> int:
         run()
     except (NotImplementedError, RecursionError):
         raise
-    except (ValueError, RuntimeError, FileNotFoundError,
+    except (ValueError, RuntimeError, FileNotFoundError, ImportError,
             TensorValidationError) as e:
         if os.environ.get("ISUMMICRON_DEBUG", "") not in ("", "0"):
             raise

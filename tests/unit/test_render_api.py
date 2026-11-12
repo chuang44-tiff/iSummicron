@@ -129,12 +129,12 @@ def test_render_options_defaults_are_locked_per_spec():
     """(d) Default values match the locked-spec § Item 3 dataclass shape."""
     opts = RenderOptions(image_path=Path("dummy.heic"))
     assert opts.tensor_path is None
-    assert opts.depth_source == "lidar"
+    assert opts.depth_source == "auto"  # Run 6 default flip
     assert opts.focus_xy is None
     assert opts.depth_scale == 1.0
     assert opts.downres is None
     assert opts.psf_norm == "l1"
-    assert opts.hdr_source == "none"
+    assert opts.hdr_source == "auto"  # Rev 3
     assert opts.bright_pass_region_size == 31
     assert opts.bright_pass_floor == pytest.approx(0.10)
     assert opts.bright_pass_norm_pct == pytest.approx(99.0)

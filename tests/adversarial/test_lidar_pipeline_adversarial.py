@@ -312,7 +312,7 @@ def test_lidar_with_downres(tmp_path: Path) -> None:
     # We'll capture what target_hw is passed to extract_lidar_depth
     captured_hw = {}
 
-    def mock_extract(path, target_hw=None):
+    def mock_extract(path, target_hw=None, **kw):
         captured_hw["target_hw"] = target_hw
         h, w = target_hw if target_hw else (128, 128)
         return np.full((h, w), 2.0, dtype=np.float32)

@@ -35,6 +35,11 @@ from summicron.render._bench import G1_MD5, ON_MD5  # noqa: E402
 G1_MD5_PRE_QB = "38c75dd253571ece9c9a0e3223fdb580"  # pre-Q-b historical render
 ON_MD5_PRE_QB = "07f5b91bc2a6ff46f1e93ddd96d6fc2e"  # pre-Q-b historical render
 
+# Pre-Run-6 (s20 default flip) pins: still reproducible through explicit flags
+# (``CANONICAL_FLAGS_OLD``), kept as literals for the ``_delta.jpg`` files.
+G1_MD5_PRE_S20 = "a106801a97a05ee7d5033e2b8d647f11"
+ON_MD5_PRE_S20 = "6cebff5403f7f0fdcda109cb8bbff35a"
+
 ON_STALE_MD5 = "2529c3272016390507836bf1098625d0"
 OTF_EXPLICIT_MD5 = "9eb07890c9d5e7ac0e24acf28f97cf87"
 
@@ -49,6 +54,8 @@ ALLOWLIST = (
     "vibe_bench/IMG_6915_occ_ON_pin.jpg",
     "vibe_bench/IMG_6915_G1_baseline_delta.jpg",
     "vibe_bench/IMG_6915_occ_ON_pin_delta.jpg",
+    "vibe_bench/IMG_6915_G1_baseline_s20.jpg",
+    "vibe_bench/IMG_6915_occ_ON_pin_s20.jpg",
     "render/current_check",
     "cherry_tensor4d.npz",
     "extract_r{2,3}/{extract_cutouts.npz,extract_report.json,extract.progress.jsonl}",
@@ -84,8 +91,10 @@ PLAN = (
 
 PINS = {
     "vibe_bench/IMG_6915_R2_layered.jpg": G1_MD5,
-    "vibe_bench/IMG_6915_G1_baseline_delta.jpg": G1_MD5,
-    "vibe_bench/IMG_6915_occ_ON_pin_delta.jpg": ON_MD5,
+    "vibe_bench/IMG_6915_G1_baseline_delta.jpg": G1_MD5_PRE_S20,
+    "vibe_bench/IMG_6915_occ_ON_pin_delta.jpg": ON_MD5_PRE_S20,
+    "vibe_bench/IMG_6915_G1_baseline_s20.jpg": G1_MD5,
+    "vibe_bench/IMG_6915_occ_ON_pin_s20.jpg": ON_MD5,
     "vibe_bench/IMG_6915_G1_baseline_default.jpg": G1_MD5_PRE_QB,
     "vibe_bench/IMG_6915_occ_ON_pin.jpg": ON_MD5_PRE_QB,
     "render/current_check/IMG_6915_occ_on.jpg": ON_MD5_PRE_QB,

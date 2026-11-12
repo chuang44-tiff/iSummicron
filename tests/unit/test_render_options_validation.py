@@ -126,7 +126,7 @@ def test_canonical_bench_builds_expected_options():
 
     o = RenderOptions.canonical_bench("a.heic", (0.4, 0.45), save=False)
     assert o.focus_xy == (0.4, 0.45)
-    assert (o.depth_scale, o.downres, o.hdr_source) == (10.0, 2048, "macos")
+    assert (o.depth_scale, o.downres, o.hdr_source) == (1.0, 2048, "macos")
     assert o.save is False and o.out_dir is None
     with pytest.raises(ValueError):
         dataclasses.replace(o, shadow_band_hi=2.0)

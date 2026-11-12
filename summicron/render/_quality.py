@@ -31,6 +31,7 @@ __all__ = [
     "window_metrics",
     "focus_fidelity",
     "paired",
+    "matte_spill_dp",
     "ALPHA_LO",
     "ALPHA_HI",
     "MIN_PX",
@@ -396,3 +397,31 @@ def bg_fullframe(
         return {"valid": False, "d_bg": None, "n_px": n_px, "gate": False}
     d = float(gv - gb)
     return {"valid": True, "d_bg": d, "n_px": n_px, "gate": abs(d) <= GATE_BG}
+
+
+def matte_spill_dp(
+    dp: np.ndarray,
+    matte: np.ndarray,
+    thresholds_d: tuple[float, ...] = (0.41, 0.9),
+    matte_min: float = 0.5,
+) -> dict[float, float]:
+    """S22 G4: share of subject pixels (``matte > matte_min``) whose effective
+    diopter defocus ``|dp|`` exceeds each threshold (diopters), as fractions.
+
+    ``dp`` is ``_eval_sink["dp"]`` (render-effective ``g * dp`` after the cap);
+    a matte of a different size is nearest-resized to ``dp``. Returns
+    ``{threshold: share}``; empty subject gives NaN.
+    """
+    dp = np.abs(np.asarray(dp, dtype=np.float32))
+    m = np.asarray(matte, dtype=np.float32)
+    if m.shape != dp.shape:
+        ys = (np.arange(dp.shape[0]) * m.shape[0] // dp.shape[0]).astype(int)
+        xs = (np.arange(dp.shape[1]) * m.shape[1] // dp.shape[1]).astype(int)
+        m = m[np.ix_(ys, xs)]
+    sel = m > matte_min
+    n = int(sel.sum())
+    vals = dp[sel]
+    return {
+        float(t): (float((vals > t).sum()) / n if n else float("nan"))
+        for t in thresholds_d
+    }

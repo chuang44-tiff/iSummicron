@@ -2,6 +2,17 @@
 
 All notable changes to **iSummicron** are documented in this file. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.4.0] — 2026-11-12
+
+### Changed
+
+- **Default look changed.** The defaults now use guided depth refinement (`--depth-guided`), reciprocal-depth (diopter) mapping (`--depth-mapping`), input-LUT tone and white balance (`--tonemap input-lut`), and `--hdr-source auto` (HDR gain map when the loader and the data are present, otherwise SDR with a note). Renders differ from earlier versions. The previous look stays reachable with `--depth-guided off --depth-mapping linear --tonemap ci --bright-pass-thresh 1.0` (plus `--depth-scale 10`).
+- `--depth-source` now defaults to `auto`: LiDAR when the HEIC carries a depth image, otherwise monocular depth with a note (it was `lidar`, which errors without a depth image). Pass `--depth-source lidar` for the strict behaviour.
+
+### Added
+
+- Experimental flags `--kernel-family {codev,synthetic}`, `--lens-aperture-mm`, `--bright-stamp` and `--bright-stamp-gain` (synthetic defocus-disc kernel family, run-time cache). These are experimental and may change or be removed in a later release. The default output is unchanged.
+
 ## [0.3.0] — 2026-11-12
 
 ### Breaking
@@ -80,6 +91,7 @@ JPG output is bit-exact at md5 level across 0.1.0 ↔ 0.2.0 on the canonical ben
 - Bring-your-own-tensor format documented in README.
 - Memory guard rejects pathological renders with actionable `--downres N` suggestion.
 
+[0.4.0]: https://github.com/chuang44-tiff/iSummicron/releases/tag/v0.4.0
 [0.3.0]: https://github.com/chuang44-tiff/iSummicron/releases/tag/v0.3.0
 [0.2.0]: https://github.com/chuang44-tiff/iSummicron/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/chuang44-tiff/iSummicron/releases/tag/v0.1.0

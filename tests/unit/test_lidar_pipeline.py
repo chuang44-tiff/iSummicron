@@ -274,6 +274,7 @@ def test_depth_scale_multiplies_depth_m_with_lidar(tmp_path: Path) -> None:
             "convolve", "--image", str(img_path),
             "--tensor", str(tensor_path),
             "--depth-source", "lidar",
+            "--depth-guided", "off", "--depth-mapping", "linear",
             "--depth-scale", "2.0",
             "--out-dir", str(tmp_path / "out"),
         ]),

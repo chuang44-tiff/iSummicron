@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from summicron.render._bench import G1_FOCUS_XY, G1_IMAGE, G1_MD5
+from summicron.render._bench import G1_FOCUS_XY, G1_IMAGE, G1_MD5_OLD
 
 ROOT = Path(__file__).resolve().parents[2]
 IMAGE = ROOT / G1_IMAGE
@@ -32,12 +32,12 @@ def test_q1_metrics_pinned_on_g1(tmp_path):
 
     out = tmp_path / "g1.jpg"
     opts = RenderOptions.canonical_bench(
-        IMAGE, G1_FOCUS_XY, out_path=out, return_linear=True
+        IMAGE, G1_FOCUS_XY, old_look=True, out_path=out, return_linear=True
     )
     sink: dict = {}
     res = render_image(opts, _eval_sink=sink, on_progress=lambda m: None)
 
-    assert hashlib.md5(out.read_bytes()).hexdigest() == G1_MD5
+    assert hashlib.md5(out.read_bytes()).hexdigest() == G1_MD5_OLD
     a1 = sink["alpha"] == 1.0
     assert a1.any()
     diff = np.abs(res.output_linear - sink["ref_lin"]).max(axis=2)

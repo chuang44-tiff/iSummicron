@@ -8,7 +8,7 @@ from summicron.render.api import RenderOptions, render_image
 
 opts = RenderOptions(
     image_path=Path("iphoneImage/Demo_input.HEIC"),
-    focus_xy=(0.40, 0.39), depth_scale=10.0, downres=2048,
+    focus_xy=(0.40, 0.39), downres=2048,
     hdr_source="macos", out_dir=Path("runs/render"),
 )
 result = render_image(opts, on_progress=print)

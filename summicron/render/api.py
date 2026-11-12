@@ -62,14 +62,18 @@ class RenderOptions:
     tensor_path: Path | None = None  # None → default_tensor_path() (Item 7)
     out_path: Path | None = None
     out_dir: Path | None = None
-    depth_source: Literal["lidar", "monocular"] = "lidar"
+    depth_source: Literal["auto", "lidar", "monocular"] = "auto"
     focus_xy: tuple[float, float] | None = None
     focus_target_m: float | None = None
     depth_scale: float = 1.0
+    depth_guided: Literal["auto", "off", "on"] = "auto"  # S1 (Run 6)
+    depth_mapping: Literal["auto", "linear", "diopter"] = "auto"  # S1 (Run 6)
+    depth_gain: float | Literal["auto"] = "auto"  # S1 (diopter only)
     downres: int | None = None
     psf_norm: Literal["l1", "peak"] = "l1"
-    hdr_source: Literal["none", "macos"] = "none"
-    bright_pass_thresh: float = 1.0
+    hdr_source: Literal["auto", "none", "macos"] = "auto"  # Rev 3
+    tonemap: Literal["auto", "ci", "input-lut"] = "auto"  # S1 tone fix G (Run 6)
+    bright_pass_thresh: float | Literal["auto"] | None = None
     bright_pass_region_size: int = 31
     bright_pass_floor: float = 0.10
     bright_pass_norm_pct: float = 99.0
@@ -79,6 +83,11 @@ class RenderOptions:
     shadow_match_strength: float = 1.0
     slab_batch_size: int | None = None  # R-perf-1 I1; None → module default (1)
     occlusion_compositing: Literal["off", "on"] = "off"  # R-occlusion-layering
+    # S22 S1: synthetic disc kernel family (experimental, off by default).
+    kernel_family: Literal["codev", "synthetic"] = "codev"
+    lens_aperture_mm: float | None = None  # None -> 17.5 under synthetic
+    bright_stamp: Literal["auto", "peak", "l1"] = "auto"
+    bright_stamp_gain: float | None = None  # None -> 2.0 under an l1 stamp
     return_linear: bool = False  # opt-in for LDR-mode linear array
     # API-only (no CLI flag): False skips every disk write (GUI/probe use);
     # RenderResult.output_path is then None.
@@ -126,10 +135,25 @@ class RenderOptions:
             )
         if self.downres is not None and self.downres < 1:
             raise ValueError(f"--downres must be >= 1, got {self.downres!r}")
-        if not math.isfinite(self.bright_pass_thresh):
+        _bt = self.bright_pass_thresh
+        if _bt is None:
+            pass
+        elif isinstance(_bt, str):
+            if _bt != "auto":
+                raise ValueError(
+                    f"--bright-pass-thresh must be a number or 'auto', got {_bt!r}"
+                )
+            if self._effective_tonemap() == "ci":
+                raise ValueError(
+                    "--bright-pass-thresh auto requires --tonemap input-lut"
+                )
+        elif isinstance(_bt, bool) or not isinstance(_bt, (int, float)):
             raise ValueError(
-                f"--bright-pass-thresh must be finite, got "
-                f"{self.bright_pass_thresh!r}"
+                f"--bright-pass-thresh must be a number or 'auto', got {_bt!r}"
+            )
+        elif not math.isfinite(_bt):
+            raise ValueError(
+                f"--bright-pass-thresh must be finite, got {_bt!r}"
             )
         if not (0 <= self.bright_pass_region_size <= 255):
             raise ValueError(
@@ -149,10 +173,48 @@ class RenderOptions:
         # R-occlusion-layering
         if self.occlusion_compositing not in ("off", "on"):
             raise ValueError("--occlusion-compositing must be 'off' or 'on'")
+        # S1: depth gain (bool is an int, reject first); ints stored as float.
+        _g = self.depth_gain
+        if isinstance(_g, bool) or not (_g == "auto" if isinstance(_g, str) else isinstance(_g, (int, float))):
+            raise ValueError(
+                f"--depth-gain must be 'auto' or a number in (0, 10], got {_g!r}"
+            )
+        if not isinstance(_g, str):
+            if not (math.isfinite(_g) and 0 < _g <= 10):
+                raise ValueError(
+                    f"--depth-gain must be 'auto' or a number in (0, 10], got {_g!r}"
+                )
+            if not isinstance(_g, float):
+                object.__setattr__(self, "depth_gain", float(_g))
         for _name, _flag, _allowed in _ENUM_FIELDS:
             if getattr(self, _name) not in _allowed:
                 raise ValueError(
                     f"{_flag} must be one of {', '.join(map(repr, _allowed))}"
+                )
+        _eff_map = self.depth_mapping
+        if self.depth_source == "monocular" and _eff_map == "auto":
+            _eff_map = "linear"
+        if self.depth_gain != "auto" and _eff_map == "linear":
+            raise ValueError("--depth-gain requires --depth-mapping diopter")
+        if self.depth_source == "monocular":
+            if self.depth_mapping == "diopter":
+                raise ValueError(
+                    "--depth-mapping diopter requires --depth-source lidar "
+                    "(monocular depth is relative [0, 1], not metric)"
+                )
+            if self.depth_guided == "on":
+                raise ValueError("--depth-guided on requires --depth-source lidar")
+        self._validate_family()
+        if self.tonemap == "input-lut":
+            if self.hdr_source == "none":
+                raise ValueError(
+                    "--tonemap input-lut requires --hdr-source != none "
+                    "(needs the HDR buffer to invert)."
+                )
+            if self.shadow_match_mode == "on":
+                raise ValueError(
+                    "--tonemap input-lut cannot be combined with "
+                    "--shadow-match-mode on"
                 )
         # F3: early-error guard
         if self.shadow_match_mode == "on" and self.hdr_source == "none":
@@ -161,14 +223,85 @@ class RenderOptions:
                 "(needs HDR linear buffer + CI preview pass)."
             )
 
+    def _validate_family(self) -> None:
+        """S22 S1 (spec 3.2): kernel-family / aperture / bright-stamp rules.
+        Messages name the flag; presets exist only in the argparse ``type=``."""
+        from summicron.render import _family as _fc
+
+        # rule 0: numeric idiom (bool first, then type, then finite/range)
+        def _num(name: str, flag: str, lo: float, hi: float, lo_open: bool,
+                 desc: str) -> None:
+            v = getattr(self, name)
+            if v is None:
+                return
+            bad = (
+                isinstance(v, bool)
+                or not isinstance(v, (int, float))
+                or not math.isfinite(v)
+                or (v <= lo if lo_open else v < lo)
+                or v > hi
+            )
+            if bad:
+                raise ValueError(f"{flag} must be a number in {desc}, got {v!r}")
+            if not isinstance(v, float):
+                object.__setattr__(self, name, float(v))
+
+        _num("lens_aperture_mm", "--lens-aperture-mm", _fc.APERTURE_MIN_MM,
+             _fc.APERTURE_MAX_MM, False,
+             f"[{_fc.APERTURE_MIN_MM:.1f}, {_fc.APERTURE_MAX_MM:.1f}] mm")
+        _num("bright_stamp_gain", "--bright-stamp-gain", 0.0, 16.0, True, "(0, 16]")
+        synth = self.kernel_family == "synthetic"
+        if self.lens_aperture_mm is not None and not synth:
+            raise ValueError("--lens-aperture-mm requires --kernel-family synthetic")
+        if synth:
+            if self.tensor_path is not None:
+                raise ValueError(
+                    "--kernel-family synthetic builds its own tensor from the "
+                    "wheel artifact; --tensor is not allowed"
+                )
+            if self.psf_norm == "peak":
+                raise ValueError("--kernel-family synthetic requires --psf-norm l1")
+            if self.depth_mapping == "linear" or self.depth_source == "monocular":
+                raise ValueError(
+                    "--kernel-family synthetic requires --depth-mapping diopter "
+                    "(and LiDAR depth)"
+                )
+        stamp = self._effective_stamp()
+        if stamp == "l1" and self.psf_norm == "peak":
+            raise ValueError("--bright-stamp l1 requires --psf-norm l1")
+        if self.bright_stamp_gain is not None and stamp == "peak":
+            raise ValueError("--bright-stamp-gain requires --bright-stamp l1")
+
+    def _effective_stamp(self) -> str:
+        """Static bright-stamp for validation: ``auto`` -> ``l1`` under the
+        synthetic family, else ``peak``."""
+        if self.bright_stamp == "auto":
+            return "l1" if self.kernel_family == "synthetic" else "peak"
+        return self.bright_stamp
+
+    def _effective_tonemap(self) -> str:
+        """Static tonemap for validation only: ``auto`` is definitely ``ci``
+        when there is nothing to tonemap (no HDR) or K11 shadow-match is on."""
+        if self.tonemap == "auto" and (
+            self.hdr_source == "none" or self.shadow_match_mode == "on"
+        ):
+            return "ci"
+        return self.tonemap
+
     @classmethod
     def canonical_bench(
         cls,
         image_path: Path | str,
         focus_xy: tuple[float, float],
+        *,
+        old_look: bool = False,
         **overrides,
     ) -> "RenderOptions":
         """Options for the canonical bench render (``_bench.CANONICAL_FLAGS``).
+
+        ``old_look=True`` parses ``_bench.CANONICAL_FLAGS_OLD`` instead (the
+        pre-Run-6 look: linear depth, no guided smoothing, Core Image tone,
+        ``--depth-scale 10``); use it for old-arm probes and characterisation.
 
         Parses the bench argv through the real shared parser
         (``_render_args.add_render_arguments``; argparse+pathlib only, so
@@ -179,14 +312,14 @@ class RenderOptions:
         ``return_linear=True``, ``save=False``.
         """
         from summicron.render import _render_args
-        from summicron.render._bench import CANONICAL_FLAGS
+        from summicron.render import _bench
 
         parser = argparse.ArgumentParser()
         _render_args.add_render_arguments(parser)
         ns = parser.parse_args([
             "--image", str(image_path),
             "--focus-xy", str(focus_xy[0]), str(focus_xy[1]),
-            *CANONICAL_FLAGS,
+            *(_bench.CANONICAL_FLAGS_OLD if old_look else _bench.CANONICAL_FLAGS),
         ])
         opts = cls.from_argparse(ns)
         return replace(opts, **overrides) if overrides else opts
@@ -227,10 +360,15 @@ class RenderOptions:
 
 # (field, CLI flag, allowed) for the Literal fields not already covered above.
 _ENUM_FIELDS = (
-    ("depth_source", "--depth-source", ("lidar", "monocular")),
+    ("depth_source", "--depth-source", ("auto", "lidar", "monocular")),
+    ("depth_guided", "--depth-guided", ("auto", "off", "on")),
+    ("depth_mapping", "--depth-mapping", ("auto", "linear", "diopter")),
     ("psf_norm", "--psf-norm", ("l1", "peak")),
-    ("hdr_source", "--hdr-source", ("none", "macos")),
+    ("hdr_source", "--hdr-source", ("auto", "none", "macos")),
+    ("tonemap", "--tonemap", ("auto", "ci", "input-lut")),
     ("shadow_match_mode", "--shadow-match-mode", ("off", "on")),
+    ("kernel_family", "--kernel-family", ("codev", "synthetic")),
+    ("bright_stamp", "--bright-stamp", ("auto", "peak", "l1")),
 )
 
 
@@ -276,6 +414,11 @@ class RenderDiagnostics:
     # unhashable.
     focus_fidelity: Mapping[str, Any] | None = field(
         default=None, hash=False, compare=False
+    )
+    # Run 6: resolved values of the ``auto`` modes (depth_source, depth_guided,
+    # depth_mapping, tonemap, bright_pass_thresh); same hash/compare rule.
+    resolved: Mapping[str, str] = field(
+        default_factory=dict, hash=False, compare=False
     )
 
 

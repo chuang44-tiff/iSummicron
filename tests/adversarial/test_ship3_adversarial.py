@@ -234,7 +234,7 @@ def test_kept_psf_model_files_import_no_removed_module(mod: str) -> None:
 
 def test_psf_model_package_has_only_kept_modules() -> None:
     py = sorted(p.stem for p in (PKG / "psf_model").glob("*.py"))
-    assert py == ["__init__", "codev_to_render", "downscale_tensor"]
+    assert py == ["__init__", "codev_to_render", "downscale_tensor", "synth_family"]
 
 
 # --------------------------------------------------------------------------

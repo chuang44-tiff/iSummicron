@@ -2,7 +2,8 @@
 
 Run: ``python -m summicron.tools.anchor_picker --image PATH [--tensor PATH]
 [--depth-source lidar|monocular] [--no-show]``. Click anywhere to print a
-depth report and the canonical bench command with ``--focus-xy`` substituted.
+depth report and the canonical bench command with ``--focus-xy`` substituted
+(argv from ``_bench.CANONICAL_FLAGS``: the Run 6 default look, no ``--depth-scale``).
 Last click wins; on window close the most recent command is reprinted.
 
 G2 (canonical bench reproducible) is MANUAL: feed the emitted command back

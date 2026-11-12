@@ -26,6 +26,11 @@ Output lands in `runs/render/` as both JPEG (q95) and PNG.
    normalization (P1.1), and applies mask weights after convolution to avoid
    ghost-copy artifacts on extended objects (P1.3).
 
+   With `--kernel-family synthetic`, `_resolve.resolve_family` selects the
+   kernel source and `_family.py` builds the synthetic disc family at run
+   time (cached in the user cache dir, not `_artifacts/`) instead of loading
+   the tensor file.
+
 ## CLI commands
 
 ```bash
@@ -71,6 +76,17 @@ opts = RenderOptions.canonical_bench("IMG_6915.HEIC", (0.40, 0.45),
                                      return_linear=True, save=False)
 result = render_image(opts)   # result.output_linear / result.output_u8
 ```
+
+Since Run 6 the canonical bench is the new default look (guided LiDAR depth,
+diopter mapping, input-lut tone). `old_look=True` builds the pre-flip look
+(`CANONICAL_FLAGS_OLD`: linear depth x10, Core Image tone):
+
+```python
+opts = RenderOptions.canonical_bench("IMG_6915.HEIC", (0.40, 0.45),
+                                     old_look=True, return_linear=True, save=False)
+```
+
+`RenderResult.diagnostics.resolved` reports what the `auto` modes resolved to.
 
 When `--out-dir` is omitted, output goes to `./runs/render` under the
 current working directory.

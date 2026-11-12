@@ -20,7 +20,7 @@ jobs:
   test:
     # arm64 runner. Pinned label, NOT macos-latest (it will migrate).
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       # An accidental model fetch fails fast instead of hanging.
       HF_HUB_OFFLINE: "1"

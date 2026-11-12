@@ -345,7 +345,7 @@ def fake_pipeline(monkeypatch):
     monkeypatch.setattr(conv, "load_image", lambda p: img.copy())
     monkeypatch.setattr(conv, "load_tensor", lambda p: _tensor())
     monkeypatch.setattr(est, "extract_lidar_depth",
-                        lambda p, target_hw=None: depth.copy())
+                        lambda p, target_hw=None, **kw: depth.copy())
     return img
 
 
@@ -367,14 +367,15 @@ def test_eval_sink_none_vs_dict_identical_result(fake_pipeline, tmp_path):
     assert np.array_equal(r0.output_u8, r1.output_u8)
     assert np.array_equal(r0.output_linear, r1.output_linear)
     assert r0.diagnostics.focus_fidelity == r1.diagnostics.focus_fidelity
-    assert set(sink) == {"keep", "alpha", "dmap", "ref_lin", "defocus_ratios"}
+    assert set(sink) == {"keep", "alpha", "dmap", "ref_lin", "defocus_ratios", "bright_thresh",
+                       "knee_ratio", "dp"}  # S22 S1 additions
     # Q1-I on the exported arrays: alpha==1 pixels are the reference exactly.
     a1 = sink["alpha"] == 1.0
     assert a1.any()
     assert float(np.abs(r1.output_linear - sink["ref_lin"])[a1].max()) == 0.0
-    # Diagnostics: focus_fidelity is the only new field, last, scalars only.
+    # Diagnostics: focus_fidelity then resolved (Run 6) are the last fields.
     names = [f.name for f in dataclasses.fields(RenderDiagnostics)]
-    assert names[-1] == "focus_fidelity"
+    assert names[-2:] == ["focus_fidelity", "resolved"]
     ff = r1.diagnostics.focus_fidelity
     assert ff is not None and ff["n_px"] >= Q.MIN_PX and ff["ssim_band"] is not None
     assert r1.diagnostics.center_ssim == ff["ssim_band"]

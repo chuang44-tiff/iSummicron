@@ -7,6 +7,7 @@ public tree, where scripts/release is absent.
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 import subprocess
 import sys
@@ -27,7 +28,15 @@ import render_notes as rn  # noqa: E402
 import test_public_docs as tpd  # noqa: E402
 
 FAKE_HEX = "ab" * 16  # an md5-shaped run, built at runtime so this file carries no literal one
-FAKE_SUMS = "\n".join(f"{'cd' * 32}  {n}" for n in rn.assets("0.3.0")[:-1]) + "\n"
+def _current_version() -> str:
+    """The version being prepared: the top entry of the overlay CHANGELOG (never hard-coded)."""
+    m = re.search(r"^## \[([0-9][^\]]*)\]", (OVERLAY / "CHANGELOG.md").read_text(), re.M)
+    return m.group(1)
+
+
+CUR = _current_version()
+
+FAKE_SUMS = "\n".join(f"{'cd' * 32}  {n}" for n in rn.assets(CUR)[:-1]) + "\n"
 
 
 @pytest.fixture
@@ -117,7 +126,7 @@ def test_broken_relative_link_fails(ov):
 
 def test_python_api_unknown_field_fails(ov):
     p = ov / "docs" / "python-api.md"
-    p.write_text(p.read_text().replace("depth_scale=10.0", "depth_scalee=10.0"))
+    p.write_text(p.read_text().replace("downres=2048", "downresx=2048"))
     assert _fails(tpd.test_t1_commands, p)
 
 
@@ -128,18 +137,18 @@ def test_private_repo_name_fails(ov):
 
 # ------------------------------------------------------------- notes mutations
 def _render(src: str) -> str:
-    return rn.render(src, "0.3.0", (OVERLAY / "CHANGELOG.md").read_text(),
+    return rn.render(src, CUR, (OVERLAY / "CHANGELOG.md").read_text(),
                      (REL / "release-notes-disclosure.md").read_text(), FAKE_SUMS)
 
 
 def test_unknown_placeholder_in_notes_refused():
-    src = (NOTES / "0.3.0.md").read_text().replace("{{VERSION}}", "{{VERSIONS}}", 1)
+    src = (NOTES / f"{CUR}.md").read_text().replace("{{VERSION}}", "{{VERSIONS}}", 1)
     with pytest.raises(ValueError):
         _render(src)
 
 
 def test_md5_in_notes_fails_the_gate(tmp_path):
-    src = (NOTES / "0.3.0.md").read_text().replace("## Highlights", f"Build {FAKE_HEX}.\n\n## Highlights", 1)
+    src = (NOTES / f"{CUR}.md").read_text().replace("## Highlights", f"Build {FAKE_HEX}.\n\n## Highlights", 1)
     out = _render(src)
     p = tmp_path / "notes.md"
     p.write_text(out)
@@ -149,13 +158,13 @@ def test_md5_in_notes_fails_the_gate(tmp_path):
 
 
 def test_wrong_version_url_in_notes_refused():
-    src = (NOTES / "0.3.0.md").read_text().replace("v{{VERSION}}/Demo_input.HEIC", "v0.2.9/Demo_input.HEIC", 1)
+    src = (NOTES / f"{CUR}.md").read_text().replace("v{{VERSION}}/Demo_input.HEIC", "v0.2.9/Demo_input.HEIC", 1)
     with pytest.raises(ValueError):
         _render(src)
 
 
 def test_missing_heading_in_notes_refused():
-    src = (NOTES / "0.3.0.md").read_text().replace("## Known limitations", "## Limits", 1)
+    src = (NOTES / f"{CUR}.md").read_text().replace("## Known limitations", "## Limits", 1)
     with pytest.raises(ValueError):
         _render(src)
 
@@ -204,7 +213,7 @@ def test_gallery_refuses_heic_not_in_manifest(tmp_path):
     if shutil.which("exiftool") is None:
         pytest.skip("exiftool not installed")
     a = _assets(tmp_path, listed=False)
-    r = _gallery(tmp_path, "--stage", str(ROOT), "--assets", str(a), "--version", "0.3.0", "--preview")
+    r = _gallery(tmp_path, "--stage", str(ROOT), "--assets", str(a), "--version", CUR, "--preview")
     assert r.returncode == 2 and "MANIFEST" in r.stderr, r.stderr
     assert not list(a.glob("*.jpg"))
 
@@ -212,7 +221,7 @@ def test_gallery_refuses_heic_not_in_manifest(tmp_path):
 def test_gallery_refuses_iphoneimage_path(tmp_path):
     d = tmp_path / "iphoneImage"
     d.mkdir()
-    r = _gallery(tmp_path, "--stage", str(ROOT), "--assets", str(d), "--version", "0.3.0", "--preview")
+    r = _gallery(tmp_path, "--stage", str(ROOT), "--assets", str(d), "--version", CUR, "--preview")
     assert r.returncode == 2 and "iphoneImage" in r.stderr, r.stderr
 
 
@@ -220,7 +229,7 @@ def test_gallery_refuses_assets_inside_a_git_tree(tmp_path):
     d = tmp_path / "repo"
     d.mkdir()
     subprocess.run(["git", "init", "-q", str(d)], check=True)
-    r = _gallery(tmp_path, "--stage", str(ROOT), "--assets", str(d), "--version", "0.3.0", "--preview")
+    r = _gallery(tmp_path, "--stage", str(ROOT), "--assets", str(d), "--version", CUR, "--preview")
     assert r.returncode == 2 and "git work tree" in r.stderr, r.stderr
 
 

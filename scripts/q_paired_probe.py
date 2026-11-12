@@ -65,7 +65,7 @@ def cmd_dump(a) -> int:
         rel, fxy = SCENES[scene]
         over = dict(save=True, return_linear=True,
                     out_path=outdir / f"{scene}.jpg")
-        opts = RenderOptions.canonical_bench(ROOT / rel, fxy, **over)
+        opts = RenderOptions.canonical_bench(ROOT / rel, fxy, old_look=True, **over)
         if a.downres is not None:
             from dataclasses import replace
             opts = replace(opts, downres=a.downres)

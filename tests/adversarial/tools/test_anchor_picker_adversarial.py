@@ -429,16 +429,18 @@ def test_orientation_forward_table_matches_pil_exif_transpose():
 def test_canonical_template_has_all_required_flags():
     """Regression: the template must carry every flag from runs/vibe_bench/README.md."""
     # HYG-0 item 2: --tensor intentionally absent (default wheel tensor).
-    required = ("--image", "--depth-source", "--depth-scale",
+    required = ("--image", "--depth-source",
                 "--downres", "--focus-xy", "--psf-norm", "--hdr-source",
                 "--output")
     for flag in required:
         assert flag in CANONICAL_TEMPLATE, f"missing flag {flag}"
 
 
-def test_canonical_template_depth_scale_ten():
-    """10x LiDAR depth scale is canonical bench spec."""
-    assert "--depth-scale 10" in CANONICAL_TEMPLATE
+def test_canonical_template_follows_canonical_flags():
+    """Run 6: the template is built from CANONICAL_FLAGS (no --depth-scale 10)."""
+    from summicron.render._bench import CANONICAL_FLAGS
+    assert " ".join(CANONICAL_FLAGS) in CANONICAL_TEMPLATE
+    assert "--depth-scale" not in CANONICAL_TEMPLATE
 
 
 def test_canonical_template_psf_norm_l1():

@@ -18,6 +18,68 @@ from __future__ import annotations
 import argparse
 
 
+def _depth_gain_type(value: str):
+    """argparse ``type=`` for ``--depth-gain``: ``'auto'`` or a float.
+
+    Range/finite checks live in ``RenderOptions.__post_init__`` (single source).
+    """
+    if value == "auto":
+        return "auto"
+    try:
+        return float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid --depth-gain {value!r}: expected 'auto' or a number"
+        ) from None
+
+
+def _bright_thresh_type(value: str):
+    """argparse ``type=`` for ``--bright-pass-thresh``: ``'auto'`` or a float.
+
+    Range/finite checks live in ``RenderOptions.__post_init__`` (single source).
+    """
+    if value == "auto":
+        return "auto"
+    try:
+        return float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid --bright-pass-thresh {value!r}: expected 'auto' or a number"
+        ) from None
+
+
+_APERTURE_PRESETS = {"35/2": 17.5, "50/2": 25.0, "apple": 13.5}
+
+
+def _lens_aperture_type(value: str):
+    """argparse ``type=`` for ``--lens-aperture-mm``: a number (mm) or a preset
+    (``35/2`` -> 17.5, ``50/2`` -> 25.0, ``apple`` -> 13.5).
+
+    Range/finite checks live in ``RenderOptions.__post_init__`` (single source);
+    only parseability is checked here.
+    """
+    if value in _APERTURE_PRESETS:
+        return _APERTURE_PRESETS[value]
+    try:
+        return float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid --lens-aperture-mm {value!r}: expected a number (mm) or one "
+            f"of {', '.join(_APERTURE_PRESETS)}"
+        ) from None
+
+
+def _stamp_gain_type(value: str):
+    """argparse ``type=`` for ``--bright-stamp-gain`` (range check in
+    ``RenderOptions.__post_init__``)."""
+    try:
+        return float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid --bright-stamp-gain {value!r}: expected a number"
+        ) from None
+
+
 def add_render_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     """Install every render flag on ``parser`` and return it."""
     parser.add_argument("--image", required=True, help="Input image path (HEIC/JPEG/PNG)")
@@ -41,15 +103,46 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
         "--depth-scale",
         type=float,
         default=1.0,
-        help="Multiplier for depth_m array before render (default 1.0; only applies with --depth-source=lidar)",
+        help="Multiplier for depth_m under --depth-mapping linear (default 1.0); "
+             "ignored with a warning under diopter",
     )
     parser.add_argument(
         "--depth-source",
-        choices=["lidar", "monocular"],
-        default="lidar",
-        help="Depth backend; 'lidar' decodes HEIC depth_images[0], "
+        choices=["auto", "lidar", "monocular"],
+        default="auto",
+        help="Depth backend; 'auto' (default) = 'lidar' when the HEIC carries "
+             "a depth aux image, else 'monocular' (with a note). 'lidar' "
+             "decodes HEIC depth_images[0] (strict: errors without it), "
              "'monocular' runs Depth Anything V2 (downloads ~100 MB DA2 "
              "model on first invocation; requires the [depth] extra).",
+    )
+    parser.add_argument(
+        "--depth-guided",
+        choices=["auto", "off", "on"],
+        default="auto",
+        help="S1: 'on' = light luminance-guided smoothing of the LiDAR depth "
+             "staircase (depth.guided.smooth_lidar_staircase, leaf defaults) "
+             "inside extract_lidar_depth. 'auto' (default) = 'on' with LiDAR "
+             "depth, else 'off'. Explicit 'on' requires LiDAR depth.",
+    )
+    parser.add_argument(
+        "--depth-mapping",
+        choices=["auto", "linear", "diopter"],
+        default="auto",
+        help="S1: depth -> defocus-axis mapping. 'auto' (default) = "
+             "'diopter' with LiDAR depth, else 'linear'. 'linear' = "
+             "depth_m * --depth-scale path (the pre-Run-6 look). 'diopter' = "
+             "|1/z - 1/anchor| mapped onto the tensor D axis (consumes "
+             "UNSCALED metres; --depth-scale != 1 is ignored with a warning). "
+             "Explicit 'diopter' requires LiDAR depth.",
+    )
+    parser.add_argument(
+        "--depth-gain",
+        type=_depth_gain_type,
+        default="auto",
+        help="S1: diopter gain, 'auto' (default; auto_gain lo=1.0, hi=2.0) or "
+             "a number in (0, 10]. Only valid with --depth-mapping diopter/auto "
+             "(except the inert default 'auto').",
     )
     parser.add_argument(
         "--focus-xy",
@@ -90,13 +183,15 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
     # survives as a silently-accepted noop (default True) for ABI.
     parser.add_argument(
         "--bright-pass-thresh",
-        type=float,
-        default=1.0,
+        type=_bright_thresh_type,
+        default=None,
         help="Dual-norm bright-pass threshold in linear luminance (P1.11 R1). "
              "Pixels above T convolve with a peak-renormed kernel (bloom "
-             "gain); pixels below T use the existing L1 path. Default 1.0 "
-             "targets HDR highlights. Pass 1e9 to disable (backward-compat "
-             "— bit-identical to pre-R1). See "
+             "gain); pixels below T use the existing L1 path. Unset = 1.0 "
+             "under --tonemap ci (targets HDR highlights) and "
+             "max(1.0, 1.1*H(0.9)) under --tonemap input-lut; 'auto' = the "
+             "latter (requires input-lut or tonemap auto). A number is used verbatim. Pass 1e9 "
+             "to disable (backward-compat -- bit-identical to pre-R1). See "
              "doc/plan/phase1/section11/locked-spec-R1-brightpass.md.",
     )
     parser.add_argument(
@@ -136,9 +231,12 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
     # doc/plan/phase1/section18/locked-spec-P1_10_4.md § 9 C4b.
     parser.add_argument(
         "--hdr-source",
-        choices=["none", "macos"],
-        default="none",
-        help="HDR input path. 'none' (default) = LDR sRGB via pillow/HEIF "
+        choices=["auto", "none", "macos"],
+        default="auto",
+        help="HDR input path. 'auto' (default) = 'macos' when the macOS HDR "
+             "loader is available (macOS + pyobjc) AND the photo carries an "
+             "HDR gain map, else 'none' (one note line). Explicit values "
+             "are strict. 'none' = LDR sRGB via pillow/HEIF "
              "(bit-identical to pre-P1.8 render). 'macos' = extended-linear "
              "float32 via Core Image expandToHDR, then Apple's Core Image "
              "CIToneMapHeadroom HDR→SDR step after render() (P1.10.2 retired "
@@ -147,6 +245,18 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
              "locked-spec-hdr-access.md.",
     )
     # ---- P1.13 K11 LDR-anchored per-channel shadow match (locked-spec § 2)
+    parser.add_argument(
+        "--tonemap",
+        choices=["auto", "ci", "input-lut"],
+        default="auto",
+        help="HDR final tonemap. 'auto' (default) = 'input-lut' when "
+             "--hdr-source macos delivers HDR headroom and shadow-match is "
+             "off, else 'ci'. 'ci' = Core Image tonemap. "
+             "'input-lut' = reproduce the input's OWN SDR tone with a measured "
+             "luma LUT (HDR-vs-SDR base of the input HEIC); also sets the "
+             "auto bright-pass threshold. Explicit 'input-lut' requires "
+             "--hdr-source macos; not combinable with --shadow-match-mode on.",
+    )
     parser.add_argument(
         "--shadow-match-mode",
         choices=["off", "on"],
@@ -211,5 +321,45 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
              "is unchanged this round (snowflakes deferred to "
              "R-highlight-guard). See doc/plan/phase2/section3_occlusion-"
              "layering/locked-spec-R-occlusion-layering.md.",
+    )
+    # ---- S22 S1: synthetic disc kernel family (experimental, OFF by default)
+    parser.add_argument(
+        "--kernel-family",
+        choices=["codev", "synthetic"],
+        default="codev",
+        help="Kernel family. 'codev' (default) = the wheel-shipped CodeV "
+             "tensor. 'synthetic' = physically sized defocus discs around the "
+             "CodeV aberration PSF (built at run time, cached in the user "
+             "cache dir): a 35 mm f/2 at the iPhone's framing is an "
+             "aperture A = 17.5 mm. Experimental, off by default. Requires "
+             "LiDAR depth, --psf-norm l1 and --depth-mapping diopter/auto; "
+             "not combinable with --tensor.",
+    )
+    parser.add_argument(
+        "--lens-aperture-mm",
+        type=_lens_aperture_type,
+        default=None,
+        metavar="MM_OR_PRESET",
+        help="Synthetic family only: entrance-pupil diameter in mm in [3, 30] "
+             "(default 17.5 = 35 mm f/2) or a preset: '35/2' (17.5), '50/2' "
+             "(25.0), 'apple' (13.5). Larger = bigger bokeh discs.",
+    )
+    parser.add_argument(
+        "--bright-stamp",
+        choices=["auto", "peak", "l1"],
+        default="auto",
+        help="Bright-pass stamp. 'auto' (default) = 'peak' for the codev "
+             "family (today's look), 'l1' for synthetic. 'peak' = "
+             "peak-normalised kernel (area-times bloom); 'l1' = the "
+             "L1-normalised kernel times --bright-stamp-gain "
+             "(energy-honest). 'l1' requires --psf-norm l1.",
+    )
+    parser.add_argument(
+        "--bright-stamp-gain",
+        type=_stamp_gain_type,
+        default=None,
+        help="Gain of the 'l1' bright stamp, a number in (0, 16] (default "
+             "2.0 under an 'l1' stamp). Requires --bright-stamp l1 (or auto "
+             "with --kernel-family synthetic).",
     )
     return parser

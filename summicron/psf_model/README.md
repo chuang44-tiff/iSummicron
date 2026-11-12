@@ -10,6 +10,7 @@ tensor that `../render/` consumes (shipped as
 |------|---------|
 | `codev_to_render.py` | Reads the 11 per-distance CodeV `.npz` files, extracts the green-channel (550 nm) PSFs, L1-normalizes, and emits a RAW 4D tensor `(R=12, D=11, H, W)`. |
 | `downscale_tensor.py` | Downscales that tensor to iPhone pixel pitch, densifies R/D (R-cubic + D-linear in `log1p(PSF x 1e4)` space), and installs the S2 delta guard at every `kernels[r, 0]`. |
+| `synth_family.py` | Synthetic defocus-disc kernel family (used by `--kernel-family synthetic`). Built at run time and cached in the user cache dir; never written to `_artifacts/`. |
 
 ## Usage
 

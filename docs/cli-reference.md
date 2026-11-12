@@ -12,7 +12,7 @@ isummicron render --image IMAGE [options]
 ### `--image PATH`
 
 Required.
-Input image (HEIC, JPEG or PNG). LiDAR depth needs an iPhone Portrait HEIC; for other images use `--depth-source monocular`.
+Input image (HEIC, JPEG or PNG). LiDAR depth needs an iPhone Portrait HEIC; other images fall back to monocular depth under `--depth-source auto`.
 
 ### `--out-dir DIR`
 
@@ -27,12 +27,12 @@ Write exactly this file instead (`.png` writes PNG, anything else JPEG quality 9
 ### `--depth-scale VALUE`
 
 Default: `1.0`.
-Multiplier on the depth map (meters) before focusing. The quick start uses 10.
+Multiplier on the depth map (meters) before focusing. Only the `linear` depth mapping uses it (the old look used 10); under `diopter` it is ignored with a warning.
 
-### `--depth-source {lidar|monocular}`
+### `--depth-source {auto|lidar|monocular}`
 
-Default: `lidar`. Choices: `lidar`, `monocular`.
-`lidar`: the HEIC's embedded depth. `monocular`: Depth Anything V2 Small (needs the `depth` extra; downloads about 100 MB on first use).
+Default: `auto`. Choices: `auto`, `lidar`, `monocular`.
+`auto`: `lidar` when the HEIC carries a depth image, otherwise `monocular` with a note. `lidar`: the HEIC's embedded depth (strict: errors without one). `monocular`: Depth Anything V2 Small (needs the `depth` extra; downloads about 100 MB on first use).
 
 ### `--focus-xy X Y`
 
@@ -44,22 +44,44 @@ Focus point, normalized: X = column, Y = row, (0, 0) = top-left, each in [0, 1].
 Default: `unset`.
 Downsample so the long edge is N pixels (never upscales). Adds `_r<N>` to output names. 2048 is the fast preview size.
 
-### `--hdr-source {none|macos}`
+### `--hdr-source {auto|none|macos}`
 
-Default: `none`. Choices: `none`, `macos`.
-`none`: 8-bit SDR load. `macos`: load the HDR gain map with Core Image and tonemap back to SDR, so highlights keep headroom (macOS 15+, `hdr-macos` extra).
+Default: `auto`. Choices: `auto`, `none`, `macos`.
+`auto`: `macos` when the macOS loader is available and the photo carries a gain map, else `none` with a note. `none`: 8-bit SDR load. `macos`: load the HDR gain map with Core Image and tonemap back to SDR, so highlights keep headroom (macOS 15+, `hdr-macos` extra).
 
 ### `--occlusion-compositing {off|on}`
 
 Default: `off`. Choices: `off`, `on`.
 `on`: layered compositing that removes halos at depth edges, for about 1.4–1.6× render time. With `--psf-norm peak` it falls back to `off` with a warning.
 
+## Depth and tone
+
+### `--depth-guided {auto|off|on}`
+
+Default: `auto`. Choices: `auto`, `off`, `on`.
+Light luminance-guided smoothing of the LiDAR depth staircase. `auto`: `on` with LiDAR depth, else `off`. An explicit `on` needs LiDAR depth.
+
+### `--depth-mapping {auto|linear|diopter}`
+
+Default: `auto`. Choices: `auto`, `linear`, `diopter`.
+How depth maps onto the PSF table's distance axis. `auto`: `diopter` with LiDAR depth, else `linear`. `linear`: `depth * --depth-scale` (the pre-0.4.0 look). `diopter`: reciprocal-depth distance from the focus point; ignores `--depth-scale`. An explicit `diopter` needs LiDAR depth.
+
+### `--depth-gain VALUE`
+
+Default: `auto`.
+Gain of the `diopter` mapping: `auto` (chosen per image) or a number in (0, 10].
+
+### `--tonemap {auto|ci|input-lut}`
+
+Default: `auto`. Choices: `auto`, `ci`, `input-lut`.
+Final HDR-to-SDR tone. `auto`: `input-lut` when `--hdr-source macos` delivers HDR headroom and shadow match is off, else `ci`. `ci`: the Apple Core Image tonemap. `input-lut`: reproduce the input photo's own SDR tone with a measured luma curve. An explicit `input-lut` needs `--hdr-source macos`.
+
 ## Highlights
 
 ### `--bright-pass-thresh VALUE`
 
-Default: `1.0`.
-Linear-luminance level above which pixels bloom as highlights. 1e9 disables.
+Default: `unset`.
+Linear-luminance level above which pixels bloom as highlights. Unset or `auto`: chosen per image from the tonemap. A number is used as given; 1e9 disables.
 
 ### `--bright-pass-region-size N`
 
@@ -119,6 +141,28 @@ Default: `4.0`.
 
 Default: `1.0`.
 0–4. Strength multiplier (1.0 = exact match).
+
+## Kernel family (experimental)
+
+### `--kernel-family {codev|synthetic}`
+
+Default: `codev`. Choices: `codev`, `synthetic`.
+Experimental. `codev`: the shipped CODE V table. `synthetic`: physically sized defocus discs built around the CODE V aberration PSF at run time and cached in the user cache directory. The synthetic discs are round. Needs LiDAR depth, `--psf-norm l1` and a diopter mapping; not combinable with `--tensor`. May change or go away in a later release.
+
+### `--lens-aperture-mm VALUE`
+
+Default: `unset`.
+Experimental, synthetic family only. Entrance-pupil diameter in mm, 3-30, or a preset: `35/2` (17.5), `50/2` (25), `apple` (13.5). Larger gives bigger discs.
+
+### `--bright-stamp {auto|peak|l1}`
+
+Default: `auto`. Choices: `auto`, `peak`, `l1`.
+Experimental. Bright-pass stamp: `auto` is `peak` for the `codev` family and `l1` for `synthetic`; `peak` is the peak-normalized kernel; `l1` is the L1-normalized kernel times `--bright-stamp-gain`. `l1` needs `--psf-norm l1`.
+
+### `--bright-stamp-gain VALUE`
+
+Default: `unset`.
+Experimental. Gain of the `l1` bright stamp, a number in (0, 16] (2.0 under an `l1` stamp).
 
 ## Environment variables
 

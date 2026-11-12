@@ -331,6 +331,8 @@ def _layered_composite(
     slab_batch_size: int | None = None,
     cancel: threading.Event | None = None,
     on_progress=None,
+    bright_stamp_gain: float | None = None,
+    active_slab_cap: int | None = None,
 ):
     """Layered occlusion-aware diffuse compositor — owns the ON branch.
 
@@ -385,7 +387,8 @@ def _layered_composite(
         scaled_ksize=scaled_ksize, psf_norm=psf_norm, H=H, W=W,
         fft_state=fft_state, slab_batch_size=slab_batch_size,
         on_progress=on_progress, cancel=cancel,
-        emit_log=False,
+        emit_log=False, bright_stamp_gain=bright_stamp_gain,
+        active_slab_cap=active_slab_cap,
     )
 
     # R-native-mem item 3: drop the 9 image spectra (~1 GB at native) for the

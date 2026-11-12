@@ -14,11 +14,11 @@ It aims at Summicron-style rendering for iPhone photos. The name is a nod to tha
 
 ## Why does my render look darker than the input?
 
-The HDR tonemap takes its headroom from the brightest pixel after rendering. Blooming highlights raise that maximum, so the whole frame is tonemapped darker. On the sample photo the mean brightness is about 13 % lower than the input's. Tone fidelity is not solved in this version.
+With the default look the final tone follows the input photo's own SDR tone (`--tonemap input-lut`), so the render should be close to the input's brightness. If you pass `--tonemap ci` (the Apple Core Image tonemap), the tonemap takes its headroom from the brightest pixel after rendering; blooming highlights raise that maximum and the whole frame can come out darker. Renders from before 0.4.0 used that tonemap.
 
 ## Where are the swirl and cat-eye shapes?
 
-They are the goal, not a finished feature. The shipped tensor varies with 12 radial bins rotated into 8 angular wedges, and highlights currently render as near-round discs. The tensor has no vignetting (pupil-clipping) term, so mechanical cat-eye is not modelled. Field effects are subtle in this version.
+They are the goal, not a finished feature. The shipped tensor varies with 12 radial bins rotated into 8 angular wedges, and highlights currently render as near-round discs. The tensor has no vignetting (pupil-clipping) term, so mechanical cat-eye is not modelled. Field effects are subtle in this release.
 
 ## Does it run on Linux or Windows?
 
