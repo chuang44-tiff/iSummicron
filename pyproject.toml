@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "isummicron"
-version = "0.5.0"
+version = "0.5.1"
 description = "Spatially varying bokeh for iPhone Portrait photos from ray-traced lens PSFs"
 readme = "README.md"
 requires-python = ">=3.12"

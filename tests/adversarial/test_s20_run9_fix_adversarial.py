@@ -277,7 +277,7 @@ def test_changelog_top_entry_parses_as_top_version_like_b5():
     """B5: grep -m1 '^## \\[' | sed 's/^## \\[([^]]+)\\].*/\\1/'."""
     txt = (OVERLAY / "CHANGELOG.md").read_text()
     first = next(ln for ln in txt.splitlines() if ln.startswith("## ["))
-    assert re.sub(r"^## \[([^\]]+)\].*", r"\1", first) == "0.5.0", first
+    assert re.sub(r"^## \[([^\]]+)\].*", r"\1", first) == "0.5.1", first
 
 
 @needs_overlay

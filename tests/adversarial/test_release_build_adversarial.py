@@ -322,6 +322,15 @@ def test_exact_patent_url_is_allowed_but_its_host_is_not(tmp_path, tokens):
     assert any("url-not-allowlisted" in f for f in rep.fails), rep.fails
 
 
+def test_pages_host_is_allowed_but_other_github_io_is_not(tmp_path, tokens):
+    t = _tree(tmp_path)
+    (t / "notes.md").write_text("Page: https://" + "chuang44-tiff.github.io/iSummicron/\n")
+    assert "P5" not in _checks(_run_gate(t, tokens))
+    (t / "notes.md").write_text("Page: https://" + "someone-else.github.io/iSummicron/\n")
+    rep = _run_gate(t, tokens)
+    assert any("url-not-allowlisted" in f for f in rep.fails), rep.fails
+
+
 @pytest.mark.parametrize("marker", ["DRAFT: text", "TBD", "a TODO here", "<!-- hidden -->"])
 def test_draft_markers_in_shipped_documents_fail_p11(tmp_path, tokens, marker):
     for name in ("README.md", "CHANGELOG.md", "NOTICE"):

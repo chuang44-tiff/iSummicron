@@ -2,6 +2,16 @@
 
 All notable changes to **iSummicron** are documented in this file. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.5.1] — 2026-11-12
+
+### Documentation
+
+- The README now shows the sample photo next to the iPhone's own Portrait-mode image (input, iPhone Portrait, 50 mm, 35 mm); the iPhone panel is its Portrait image upscaled from 600×800.
+- The interactive explainer opens in the browser at https://chuang44-tiff.github.io/iSummicron/; the Release asset `isummicron_pipeline.html` stays as a download.
+- The wording about phone portrait modes is softened to what the comparison image shows: a phone's portrait mode computes its blur, and a real lens's blur spots have bright rims and turn into eggs and cat's eyes toward the frame edge.
+
+No code or output changes; same tensors and pins as 0.5.0.
+
 ## [0.5.0] — 2026-11-12
 
 ### Breaking
@@ -127,6 +137,7 @@ JPG output is bit-exact at md5 level across 0.1.0 ↔ 0.2.0 on the canonical ben
 - Bring-your-own-tensor format documented in README.
 - Memory guard rejects pathological renders with actionable `--downres N` suggestion.
 
+[0.5.1]: https://github.com/chuang44-tiff/iSummicron/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/chuang44-tiff/iSummicron/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/chuang44-tiff/iSummicron/releases/tag/v0.4.0
 [0.3.0]: https://github.com/chuang44-tiff/iSummicron/releases/tag/v0.3.0

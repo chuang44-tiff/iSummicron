@@ -38,7 +38,7 @@ BASE = SCHEME + "github.com/chuang44-tiff/iSummicron"
 # The privacy gate's URL allowlist (a copy; the dev-only test checks it stays a subset).
 URL_ALLOW_DOCS = (
     "github.com/chuang44-tiff/isummicron", "github.com/estherlin", "blur-fields.github.io",
-    "www.apache.org", "huggingface.co/depth-anything", "arxiv.org", "doi.org",
+    "chuang44-tiff.github.io", "www.apache.org", "huggingface.co/depth-anything", "arxiv.org", "doi.org",
     "keepachangelog.com", "semver.org",
 )
 FIGURES = [
@@ -424,7 +424,7 @@ def test_t7_changelog_links():
             # a release link is the tag URL; from 0.5.0 on it may instead compare with the previous release
             prev = versions[versions.index(v) + 1] if versions.index(v) + 1 < len(versions) else None
             ok = [f"{BASE}/releases/tag/v{v}"]
-            if v == "0.5.0":
+            if v in ("0.5.0", "0.5.1"):
                 ok = [f"{BASE}/compare/v{prev}...v{v}"]  # 0.5.0 carries the compare link (the first diff-sized release)
             assert refs[v] in ok, (v, refs[v])
     body = re.search(rf"(?ms)^## \[{re.escape(versions[0])}\][^\n]*\n(.*?)(?=^## \[|^\[[^\]]+\]:)", text)

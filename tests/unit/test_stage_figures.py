@@ -163,7 +163,7 @@ def test_publish_helper_runs_the_verify_step():
 
 def test_pin_file_is_the_reviewed_page_hash_and_verify_rechecks_it(tmp_path, figdir, page):
     real = (REL / "page.sha256").read_text().strip()
-    assert real == "14bd645349eb631af46df3f2ab298dee374cbfc9aeda669889abb1df4e9d12ef"
+    assert real == "705a1c5d178347fa0429d3914b96b3d38b8e8aaff4cb86c8c3206b7059d4e176"
     p, sha = page
     out = tmp_path / "assets"
     assert _run("0.5.0", str(figdir), str(out), "--page", str(p)).returncode == 0

@@ -16,7 +16,7 @@ With conda:
 
 ```bash
 git clone https://github.com/chuang44-tiff/iSummicron.git && cd iSummicron
-git checkout v0.5.0
+git checkout v0.5.1
 conda env create -f environment.yml && conda activate isummicron
 pip install -e '.[heic,depth,hdr-macos,eval-quality,dev]'
 ```
