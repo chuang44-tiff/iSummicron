@@ -1,0 +1,22 @@
+iSummicron
+Copyright 2026 iSummicron contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+PSF tensor provenance
+---------------------
+The file summicron/_artifacts/codev_render_v1.npz is a table of point spread
+functions simulated with CODE V from the sample design "ag_dblgauss" (a generic
+double-Gauss of about 100 mm focal length at f/2). It contains no measured
+Leica data. It is distributed under the Apache License, Version 2.0, together
+with the rest of this repository.
+
+Third-party model weights
+-------------------------
+The optional monocular depth fallback uses Depth Anything V2 Small
+(Apache-2.0). Its weights are downloaded from Hugging Face at first use and are
+not redistributed in this repository or in the wheel.
+
+Trademarks
+----------
+Summicron and Leica are trademarks of Leica Camera AG. iSummicron is not affiliated with, sponsored by, or endorsed by Leica Camera AG. The shipped PSF is a simulated generic double-Gauss used as a proxy, not a measurement of any Leica lens.

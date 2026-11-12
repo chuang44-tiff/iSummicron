@@ -21,7 +21,7 @@ corpus_*
 # Run artifacts — every CLI output (inventory, harvest reports, sidecars,
 # full-corpus dumps) lives under /runs/ at the repo root. This whole tree
 # is generated data, not source, and contains corpus filenames — never
-# committed. See HOW_TO_USE.md for the layout.
+# committed. See runs/vibe_bench/README.md for the retained bench spec.
 # Use /runs/* rather than /runs/ so git still traverses the dir and can
 # honor negation rules below.
 /runs/*
@@ -45,9 +45,7 @@ corpus_*
 *.ARW
 *.RAF
 
-# iPhone test images — tracked so they're available on all dev machines.
-# The negation rules below override the *.HEIC and *.heic rules above.
-!iphoneImage/
-!iphoneImage/**
-!iphoneImage/*.HEIC
-!iphoneImage/*.heic
+# HEIC/HEIF images are never tracked, anywhere (they carry location metadata).
+# Sample images are distributed as release attachments, not in git.
+*.HEIF
+*.heif

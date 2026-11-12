@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "isummicron"
-version = "0.2.0"
-description = "Spatially-varying PSF bokeh renderer — applies a 4D PSF tensor to your image. Ships with a simulated double-gauss 50mm f/2 PSF."
+version = "0.3.0"
+description = "iSummicron — organic, spatially-varying bokeh for iPhone Portrait photos from CodeV-simulated double-Gauss PSF kernels (Summicron proxy)"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 authors = [{ name = "iSummicron contributors" }]
-keywords = ["bokeh", "psf", "computational-photography", "depth", "lens-blur"]
+keywords = ["bokeh", "psf", "leica", "summicron", "computational-photography"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: Apache Software License",
@@ -19,15 +19,19 @@ classifiers = [
     "Topic :: Multimedia :: Graphics",
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
+# P1.audit Item 1: declare core runtime dependencies for the active
+# v0 render path (load_tensor + render + sRGB transfer + image I/O).
+# All optional-extra-gated callsites use lazy imports with actionable
+# ImportError messages — see summicron/depth/estimate.py and
+# summicron/io/hdr_load_macos.py.
 dependencies = ["numpy>=1.26", "scipy>=1.11", "pillow>=10.0"]
 
 [project.optional-dependencies]
-heic      = ["pillow-heif>=0.14"]
-depth     = ["torch>=2.1", "transformers>=4.40"]
-hdr-macos = [
-    "pyobjc-framework-Quartz; sys_platform == 'darwin'",
-    "pyobjc-framework-CoreImage; sys_platform == 'darwin'",
-]
+heic         = ["pillow-heif>=0.14"]
+depth        = ["torch>=2.4,<3", "transformers>=4.45,<6"]
+hdr-macos    = ["pyobjc-framework-Quartz; sys_platform == 'darwin'"]
+eval-quality = ["scikit-image>=0.22"]
+dev          = ["pytest>=8", "ruff==0.15.15", "pyyaml>=6"]
 
 [project.scripts]
 isummicron = "summicron.cli:main"
@@ -35,5 +39,27 @@ isummicron = "summicron.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["summicron"]
 
+# P1.audit Item 7: the canonical CodeV tensor lives at
+# summicron/_artifacts/codev_render_v1.npz. hatchling's default file
+# discovery includes .npz under packaged dirs, but we force-include it
+# explicitly so a future `.gitignore`/`MANIFEST.in` change can't quietly
+# drop it from the wheel.
 [tool.hatch.build.targets.wheel.force-include]
 "summicron/_artifacts/codev_render_v1.npz" = "summicron/_artifacts/codev_render_v1.npz"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+markers = [
+    "slow: marks tests as slow — loads real data, runs full render, or loads depth model (deselect with '-m \"not slow\"')",
+]
+
+[tool.ruff.lint]
+# pinned = ruff 0.15 defaults; newer ruff widened defaults (CI round)
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Adversarial tests intentionally include shim/import patterns that ruff
+# flags as unused — these are part of the hostile-probe surface (e.g.
+# import-time side-effect probes, redefined fixtures for surface-coverage
+# variants). Baseline rather than scrub.
+"tests/adversarial/*" = ["F401", "F811"]

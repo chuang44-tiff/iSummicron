@@ -1,17 +1,24 @@
 """macOS HDR HEIC loader via Core Image's `expandToHDR` option.
 
 Returns extended-linear float32 RGB in `(H, W, 3)`. Values may exceed 1.0 on
-true HDR captures (iPhone 12+ HEIC with HDR gain-map). On SDR-only captures
-the result stays <= 1.0.
+true HDR captures (iPhone 12+ HEIC with HDR gain-map). SDR-only captures are
+NOT guaranteed to stay <= 1.0: a Display-P3-tagged SDR image loads with max
+~1.34 (P3 -> extended-linear-sRGB gamut excursion), so ``max > 1`` alone is
+not an HDR discriminator.
 
 The module is safe to import on non-macOS platforms; the single public call
 `load_hdr_heic()` raises `NotImplementedError` there. Heavy Objective-C
 frameworks (Quartz / Foundation) are imported lazily *inside* the function so
 Linux CI can import this module for test discovery without installing
 pyobjc-framework-Quartz.
+
+The CIImage `options:` argument must be a real `NSDictionary` (built via
+`NSDictionary.dictionaryWithObject_forKey_`): on macOS 27 + pyobjc 12 any
+bridged Python `dict` there raises `NSInvalidArgumentException`.
 """
 from __future__ import annotations
 
+import platform
 import sys
 import warnings
 from pathlib import Path
@@ -117,17 +124,31 @@ def load_hdr_heic(path: str | Path) -> np.ndarray:
     # (e.g. user installed plain wheel and passed --hdr-source macos).
     try:
         import Quartz
-        from Foundation import NSURL
+        from Foundation import NSURL, NSDictionary, NSNumber
     except ImportError as e:
         raise ImportError(
             "macOS HDR loader requires `pip install isummicron[hdr-macos]` "
-            "(installs pyobjc-framework-Quartz + CoreImage). "
+            "(installs pyobjc-framework-Quartz, which provides Core Image). "
             "Use --hdr-source none to fall back to LDR sRGB load."
         ) from e
 
     url = NSURL.fileURLWithPath_(str(path))
-    options = {"kCIImageExpandToHDR": True}
-    ci_image = Quartz.CIImage.imageWithContentsOfURL_options_(url, options)
+    key = getattr(Quartz, "kCIImageExpandToHDR", "kCIImageExpandToHDR")
+    # macOS 27 + pyobjc 12: a bridged Python dict raises
+    # NSInvalidArgumentException ("key does not exist"); pass a real NSDictionary.
+    # Do NOT fall back to options=None on failure: that loads without HDR
+    # expansion (render succeeds but silently loses headroom / drifts).
+    options = NSDictionary.dictionaryWithObject_forKey_(
+        NSNumber.numberWithBool_(True), key
+    )
+    try:
+        ci_image = Quartz.CIImage.imageWithContentsOfURL_options_(url, options)
+    except Exception as exc:  # objc bridge raises ValueError / objc.error
+        raise RuntimeError(
+            f"Core Image rejected HDR load of {path} "
+            f"(macOS {platform.mac_ver()[0]}): {exc}. "
+            "Use --hdr-source none to fall back to LDR sRGB load."
+        ) from exc
     if ci_image is None:
         raise RuntimeError(f"CIImage failed to load: {path}")
 
@@ -156,12 +177,12 @@ def load_hdr_heic(path: str | Path) -> np.ndarray:
         None,  # colorSpace=None: passthrough of CIContext working space
     )
 
-    rgba = np.frombuffer(bytes(buf), dtype=np.float32).reshape(height, width, 4)
-    # Drop alpha; copy so the backing buffer can be freed.
+    rgba = np.frombuffer(buf, dtype=np.float32).reshape(height, width, 4)
+    # Drop alpha; np.maximum below allocates a fresh array (no explicit copy).
     # P1.8 bug 4: clip extended-linear out-of-gamut negatives (Core Image
     # returns ~-0.004 on IMG_6651). Below optical noise floor; keeps downstream
     # Reinhard well-defined.
-    arr = np.maximum(rgba[:, :, :3].copy(), 0.0)
+    arr = np.maximum(rgba[:, :, :3], 0.0)
     # R0 (P1.11): Core Image ignores EXIF Orientation; align to PIL canonical
     # display shape so renderer sees the same grid regardless of load path.
     return _canonicalize_orientation(arr, path)

@@ -9,23 +9,27 @@ dependencies:
   - scipy>=1.11
   - pillow>=10
   - pillow-heif>=0.20
+  - scikit-image>=0.22
 
-  # Dev tooling (tests + lint)
+  # Tests + lint
   - pytest>=8
+  - pyyaml>=6
   - ruff
 
   - pip
   - pip:
-      # Monocular depth (Apple-Silicon-friendly Torch + Depth Anything V2)
-      - torch>=2.4
-      - torchvision>=0.19
-      - transformers>=4.45
-      - huggingface_hub>=0.24
+      # Monocular depth fallback (Depth Anything V2 Small)
+      - torch>=2.4,<3
+      - transformers>=4.45,<6
       # macOS-only HDR access via Core Image (CIToneMapHeadroom).
       # Quartz re-exports CIImage / CIContext; no separate CoreImage wheel.
       - 'pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"'
 
 # After `conda env create -f environment.yml`, run:
 #   conda activate isummicron
-#   pip install -e .
+#   pip install -e '.[heic,depth,hdr-macos,eval-quality,dev]'
 # to put the `isummicron` console script on PATH.
+#
+# Import numpy before torch in this env: the conda-forge numpy/scipy and the
+# pip torch wheel each bundle an OpenMP runtime, and importing torch first
+# aborts with "OMP: Error #15".

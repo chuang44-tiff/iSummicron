@@ -9,6 +9,7 @@ import argparse
 import gc
 import logging
 import math
+import os
 import sys
 import threading
 import warnings
@@ -61,15 +62,8 @@ def _emit(on_progress: _OnProgress, msg: str) -> None:
 
 _logger = logging.getLogger(__name__)
 
-# P1.12 R2: depth-layered gather module state.
-# P1.10.4 C5: --layered-gather flag, _LEGACY_PATH_COUNTER, and
-# get_legacy_path_count() removed. The `layered_gather` kwarg on render()
-# survives as a silently-accepted noop (default True) for ABI; the False-
-# path body has been deleted. Layered gather is the SOLE rendering path.
-# Silent fallback (depth_m / object_distances_m missing) routes to
-# `_legacy_scatter_basis` with a DeprecationWarning per locked-spec § 4
-# option (b); fallback path is private and slated for removal in a
-# future round.
+# P1.12 R2: depth-layered gather module state. Layered gather is the SOLE
+# rendering path (CLI-1a: legacy fallback + vestigial kwargs deleted).
 _MAX_ACTIVE_SLABS = 8
 _EMPTY_SKIP_THRESH = 0.01
 
@@ -77,9 +71,14 @@ _EMPTY_SKIP_THRESH = 0.01
 # slabs in serial batches of `_SLAB_BATCH_SIZE` to bound RAM. Per-batch
 # working set (per_slab_alpha + per_slab_outputs_d/b) is freed at the batch
 # boundary; running running argmin buffers carry the holes-fill state across
-# batches. Default 4 chosen by Researcher B; user-tunable via
-# `--slab-batch-size N` (CLI) or `slab_batch_size=` kwarg on render().
-_SLAB_BATCH_SIZE = 4
+# batches. R-native-mem item 1 (doc/plan/phase2/section17_native-memory/
+# locked-spec-mem.md): default 4 -> 1. Batching was introduced for RAM, not
+# speed (section1_perf-research/probe-round-1.md:68); at the gather peak every
+# retained slab beyond the first holds 7 planes (alpha + two (H,W,3) outputs),
+# about 2 GB at native with batch 4. The output is bit-identical for every
+# batch size; N > 1 only costs memory. User-tunable via `--slab-batch-size N`
+# (CLI) or `slab_batch_size=` kwarg on render().
+_SLAB_BATCH_SIZE = 1
 
 # P1.10.2 Cut 3: bright-pass smoothstep knee half-width. Was a CLI flag
 # (--bright-pass-knee) and render() kwarg (bright_knee); demoted to a
@@ -87,37 +86,10 @@ _SLAB_BATCH_SIZE = 4
 # established that K is empirically inert at the canonical T=1e9 sentinel.
 _BRIGHT_KNEE = 0.20
 
-# P1.10.4 C2: r_blend_strength plumbing trimmed (CLI flag, validator, helper,
-# and module constants R_BLEND_STRENGTH_DEFAULT/MAX, _TAPER_HALF_BASE/MAX
-# all deleted). The kwarg survives on render() as a silently-accepted noop
-# (preserved across C3 per dispatch instructions; later cut sweeps it).
-# P1.10.4 C3: slab path bodies deleted (`_build_slab_kernel`,
-# `_legacy_scatter_slab`, `_scatter_one_slab_fixed_d`, `_norm_slab_weights`
-# POU build, `_LAST_NORM_SLAB_WEIGHTS`). The basis path is now the sole
-# render kernel.
-# P1.10.4 C4b: --radial-blend-mode CLI flag deleted; the `radial_blend_mode`
-# kwarg survives on render() as a silently-accepted noop (default "basis")
-# preserving call-site ABI. Validator deleted (was only consumed by
-# tests/adversarial/test_radial_blend_mode_adversarial.py, deleted in C4b).
-# TL REVISION 1 (P1.12 R2, 2026-04-24): α-blend identity-snap knee for the
-# layered-gather path. The legacy D_KNEE=0.10 produced a ~5× face Lap-var
-# drop under layered composite because the smoothstep POU spreads in-focus
-# pixel weight across ~4 non-identity bins. A slightly wider knee matches
-# legacy effective sharpness given the POU's wider support. DO NOT apply
-# to the legacy path (breaks G_BACKCOMPAT bit-identity).
+# Alpha-blend identity-snap knee for the layered-gather path: pixels with
+# defocus ratio below this snap to the in-focus (identity) kernel.
 D_KNEE_LAYERED = 0.10
 
-# P1.10.5 C1: hybrid kwarg DeprecationWarning sentinel. The 3 vestigial
-# kwargs `r_blend_strength`, `radial_blend_mode`, `layered_gather` survive
-# on render() as silently-accepted noops post-P1.10.4 (CLI flags + helpers
-# deleted). P1.10.5 demotes them with a DeprecationWarning gated on the
-# `_UNSET` sentinel: signature defaults flip from literal `0.20`/`"basis"`/
-# `True` to `_UNSET`; resolution to historical default happens inside
-# render() body BEFORE the warning gate, so default-call behavior is
-# unchanged (canonical bench main() does not pass any of the 3 kwargs;
-# bit-identity to md5 38c75dd2... preserved). Hard removal queued for
-# CLI-1. See doc/plan/phase1/section19/locked-spec-P1_10_5.md § 3 C1.
-_UNSET = object()
 
 
 # ---------------------------------------------------------------------------
@@ -291,94 +263,361 @@ def load_image(path: str | Path) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Memory guard (P1.audit Item 6)
+# Memory guard (P1.audit Item 6; R-native-mem items 6-7)
 # ---------------------------------------------------------------------------
 #
-# Pixel-only guard (`MAX_PIXELS`) demoted to a fast-path early-gate. The
-# real envelope is a peak-byte projection: the layered-gather slab loop
-# allocates `acc_alpha (H,W)` plus `per_slab_alpha (D,H,W)` plus two
-# `(D,H,W,3)` per-slab output buffers in float32, then rolls in FFT
-# temporaries on top. The audit measured ~8.2 GB peak at 5712x4284 D=11;
-# the formula `D * H * W * 4 * 8` (8× the single-slice float32 cost,
-# covering one alpha + 6 colour planes + 1 unit of safety slack for FFT
-# temporaries) predicts ~8.6 GB at the same resolution — within 5% of
-# audit's measurement. `MAX_BYTES = 8 GB` defends a 16 GB Mac with ~4 GB
-# headroom for the OS + FFT working sets. Overflow raises a RuntimeError
-# with an actionable `--downres N` suggestion.
+# R-native-mem (doc/plan/phase2/section17_native-memory/locked-spec-mem.md):
+# the guard is now an HONEST structural plane-sum estimate (never below the
+# measured phys_footprint on the checked scene x size x mode x batch grid) and
+# a fixed 12 GiB cap. The pixel-only ``MAX_PIXELS`` envelope stays a fast-path
+# early gate (``_pixel_guard``, called at the same call site as before so error
+# order and "no allocation before rejection" are unchanged); the byte budget
+# (``_memory_guard``) runs just after ``scaled_ksize`` is known, before
+# ``np.pad`` and every large allocation.
 #
-# `_memory_guard` is now called from inside `render()` AFTER the tensor is
-# loaded so the D dimension is known. The on-entry "Memory budget" line is
-# routed through `_emit(on_progress, ...)` so it ONLY fires when a caller
-# registers a sink — keeping CLI stdout byte-identical to the pre-Item-6
-# canonical-bench md5 38c75dd2... (G1 gate).
+# The on-entry "Memory budget" line goes ONLY to ``on_progress`` so CLI stdout
+# stays byte-identical (canonical-bench G1 pins).
 
 MAX_PIXELS = 36_000_000  # 6000 x 6000 — fast-path early gate
-# Monkey-bump from 8 GB → 12 GB. 8 GB was tuned for 16 GB Macs; on ≥18 GB
-# native iPhone resolution (peak ~8.6 GB at 5712×4284 D=11) cleared the cap.
-# R-perf-1 P0 (I1+I2) eliminated the per-slab (D,H,W,3) buffers — the slab
-# loop now processes slabs in serial batches of `_SLAB_BATCH_SIZE` and
-# maintains running argmin holes-fill state at (H,W,3). Peak no longer
-# scales with D; the 12 GB monkey-bump is now safely reducible. See
-# `_estimate_peak_bytes` for the post-P0 envelope.
-MAX_BYTES = 12 * 1024**3  # 12 GB hard cap
+MAX_BYTES = 12 * 1024**3  # 12 GiB fixed cap (a deterministic constant; CI-safe)
+_GIB = 1024**3
+
+# Process baseline outside the numpy plane model: interpreter + numpy/scipy/
+# PIL/objc import footprint + allocator slack. The ONLY free constant of the
+# estimator (no fitted per-pixel coefficient). Measured render-entry footprint:
+# 0.85 GB at 1024 (Researcher B) and 1.06 GB at native (Researcher A).
+PLATFORM_BASE = 1 * _GIB
+# Small-array allowance (ys_r/xs_r vectors, per-bin kernels, kernel spectra
+# bookkeeping): measured < 0.4 MB at 2048; a flat 1 MiB, NOT per pixel.
+_SMALL_ALLOC = 1 << 20
 
 
-def _estimate_peak_bytes(h: int, w: int, d: int) -> int:
-    """Project peak working-set bytes for a render at ``(H, W, D)``.
+class MemoryBudgetError(RuntimeError):
+    """Raised when the estimated peak exceeds the byte budget.
 
-    R-perf-1 P1 (I5) — post-slab-batching envelope. Models:
-
-    * Per-batch working set: ``min(_SLAB_BATCH_SIZE, D) × H × W × 4 × 8``
-      bytes (the small per-batch lists hold up to ``batch_size`` of
-      ``(H,W)`` alpha + two ``(H,W,3)`` colour buffers in float32 — that
-      is 1 alpha + 6 colour planes = 7 planes; we keep the historical 8×
-      multiplier for FFT-temp slack inside the inner scatter).
-    * Streaming holes-fill running buffers: two ``(H,W,3)`` colour
-      buffers + one ``(H,W)`` ``int32`` distance buffer = ``2 × H × W ×
-      4 × 4`` bytes ≈ 32 bytes per pixel constant overhead, INDEPENDENT
-      of D.
-
-    At ``5712 × 4284 D=11 batch=4``: ``4 × 5712 × 4284 × 32 ≈ 3.13 GB``
-    (vs the stale 8.6 GB pre-P0 projection). At ``2048 × 1536 D=11
-    batch=4``: ``≈ 0.40 GB``. Cross-check against the post-P0 real-iPhone
-    probe at 2048: 1.298 GB peak RSS includes Python/numpy/scipy/HDR
-    payload ≈ 0.9 GB on top of the working set — within ±5% of formula.
+    ``suggested_downres`` is the largest long edge (multiple of 64, >= 256)
+    whose estimate fits the budget at the same aspect ratio and parameters
+    (``kernel_size`` held fixed — conservative), or ``None`` if none fits.
     """
-    batch = min(int(_SLAB_BATCH_SIZE), int(d))
-    per_batch = batch * int(h) * int(w) * 4 * 8
-    streaming = 2 * int(h) * int(w) * 4 * 4
-    return per_batch + streaming
+
+    def __init__(self, message: str, *, estimated_bytes: int,
+                 budget_bytes: int, suggested_downres: int | None) -> None:
+        super().__init__(message)
+        self.estimated_bytes = int(estimated_bytes)
+        self.budget_bytes = int(budget_bytes)
+        self.suggested_downres = suggested_downres
 
 
-def _memory_guard(h: int, w: int, d: int, *, on_progress: _OnProgress = None) -> None:
-    """Reject renders projected to exceed ``MAX_BYTES``.
+def _budget_bytes() -> int:
+    """Byte budget, read per call: ``ISUMMICRON_MAX_BYTES`` or ``MAX_BYTES``."""
+    raw = os.environ.get("ISUMMICRON_MAX_BYTES")
+    if raw is None:
+        return int(MAX_BYTES)
+    try:
+        val = int(raw)
+    except ValueError:
+        val = 0
+    if val <= 0:
+        raise ValueError(
+            f"ISUMMICRON_MAX_BYTES must be an integer > 0 (bytes); got {raw!r}"
+        )
+    return val
 
-    Two-stage gate: the pixel-only ``MAX_PIXELS`` envelope rejects giant
-    single-slice images fast (preserves the pre-Item-6 rejection envelope
-    when ``D`` happens to be small enough that the byte budget would
-    otherwise admit a > 36 MP image). The byte projection then catches the
-    H*W*D shape that actually drives slab-loop peak.
+
+def _fft_geometry(h: int, w: int, kernel_size: int, *, padded: bool = False) -> dict:
+    """Shared FFT/padding geometry for the estimator and the FFT hoist.
+
+    ``h, w`` are the unpadded image dims (or, with ``padded=True``, the
+    already-padded buffer dims). Returns ``pad``, ``padded_shape``,
+    ``full_shape`` (linear-conv shape), ``fshape`` (next-fast-len FFT shape;
+    what scipy's ``fftconvolve`` picks) and ``spec_shape`` (rfft2 output).
+    """
+    k = int(kernel_size)
+    pad = k // 2
+    if padded:
+        hp, wp = int(h), int(w)
+    else:
+        hp, wp = int(h) + 2 * pad, int(w) + 2 * pad
+    full = (hp + k - 1, wp + k - 1)
+    fshape = (
+        sp_fft.next_fast_len(full[0], real=True),
+        sp_fft.next_fast_len(full[1], real=True),
+    )
+    return {
+        "pad": pad,
+        "padded_shape": (hp, wp),
+        "full_shape": full,
+        "fshape": fshape,
+        "spec_shape": (fshape[0], fshape[1] // 2 + 1),
+    }
+
+
+def _estimate_peak_breakdown(
+    h: int, w: int, d: int, *,
+    occlusion: bool = False,
+    kernel_size: int = 183,
+    n_radial: int = 12,
+    slab_batch_size: int | None = None,
+) -> dict:
+    """Structural plane-sum projection of the render's peak working set.
+
+    Units: ``P`` = one unpadded float32 plane (``H*W*4`` B), ``Pp`` = one
+    padded plane, ``S`` = one complex64 rfft2 spectrum (``fshape0 *
+    (fshape1//2+1) * 8`` B; also bounds one real ``fshape`` plane). Every term
+    cites the ``convolve.py`` / ``_layered_composite.py`` line family it models
+    and counts only buffers live at that line. WORST CASE: all ``d`` slabs and
+    all ``n_radial`` bins active. No fitted coefficient; the one free constant
+    is ``PLATFORM_BASE``.
+
+    Returns a dict with ``pipeline``, ``prep``, ``gather``, ``over`` (0 when
+    ``occlusion`` is False), ``base`` and ``total``::
+
+        total = pipeline + max(prep, gather, over) + base
+
+    ``pipeline`` holds the planes that exist outside the phases (``img_lin``
+    3P, ``depth_m`` P, ``dmap`` P). Each phase is the max over its sequential
+    sub-phases (a transient counts only alongside what is live at that line).
+
+    Outside the model (see the module docs): the native HEIC load (the HDR
+    payload before ``render()``), monocular depth (torch model resident) and
+    the Core Image tonemap leak after ``render()``.
+    """
+    h, w, d = int(h), int(w), int(d)
+    nr = int(n_radial)
+    geo = _fft_geometry(h, w, kernel_size)
+    hp, wp = geo["padded_shape"]
+    f0, f1 = geo["spec_shape"]
+    P = h * w * 4
+    Pp = hp * wp * 4
+    S = f0 * f1 * 8
+    batch = max(1, min(int(slab_batch_size or _SLAB_BATCH_SIZE), d))
+
+    # Caller-held planes: img_lin (3P) and depth_m (P). ``dmap`` (P, built by
+    # np.interp inside render(), :1603) lives through every phase, so it is
+    # added to each phase below (keeps ``tracemalloc delta <= max(phases)``
+    # exact; the total is the same 5P as counting it here).
+    pipeline = 3 * P + P
+
+    # --- prep (render() :1686-1760) -------------------------------------
+    # Live through prep: radial_frac_map P (:1641), wedge_idx int32 P (:1670),
+    # img_padded 3Pp (:1686).
+    r_pre = 2 * P + 3 * Pp
+    # bright split (:1702-1727): lum Pp, region-aware bright weight (~5 Pp
+    # temporaries inside), bright_mask Pp, img_bright_padded + img_diffuse_padded.
+    prep_bright = r_pre + 6 * Pp + 5 * Pp
+    # fft_build (:1734, _build_image_fft_state): 3 padded buffers done; img_F
+    # and img_diffuse_F spectra (3S each) done while img_bright_F builds
+    # (3S list + 3S np.stack) + 1S pocketfft zero-pad/scratch.
+    r_pad = 2 * P + 9 * Pp
+    prep_fft = r_pad + 6 * S + 6 * S + S
+    # compute_slab_weights (:802-863): spectra built; slab_w (D,H,W) + per-slab
+    # temporaries (~6P) in the loop, or slab_w + quotient + wsum at the end
+    # (the rebinding frees the input before ``astype``).
+    prep_slab_w = r_pad + 9 * S + max(d * P + 6 * P, 2 * d * P + 4 * P)
+    prep = max(prep_bright, prep_fft, prep_slab_w) + P + _SMALL_ALLOC  # + dmap
+
+    # --- gather (_layered_gather_diffuse :1216-1405; OFF and ON regime-a) ---
+    # Resident: radial P, wedge P, 9 padded planes, 9 spectra, slab_w (D,H,W).
+    r_g = 2 * P + 9 * Pp + 9 * S + d * P
+    accum = 9 * P  # output 3P, output_bright 3P, weight_sum, delta_weight_sum, acc_alpha (:1248-1254)
+    # entry: np.argmax(slab_w, axis=0) copies the (D,H,W) array and returns
+    # int64 (2P) before the int32 cast (P) (:1266).
+    gather_entry = r_g + accum + d * P + 3 * P
+    # steady state through the loop: argmax_d_full P + best_d_dist P +
+    # best_d_color_d/b 6P (:1266-1271).
+    r_loop = r_g + accum + 8 * P
+    # per active slab: out_d 3P + out_b_d 3P + wsum_d P + delta_wsum_d P (:1313-1316)
+    # + alpha_d P; stale loop locals of the previous slab stay bound until
+    # rebound (wsum_d_safe P, dist_d_for_this P, dist_masked_d P, validity_d +
+    # better P/2: ~3.5P, :1338/:1365-1369); the other (batch-1) slabs of the
+    # batch are retained at 7P each (:1352-1355).
+    slab_cur = 9 * P + 7 * P // 2 + (batch - 1) * 7 * P
+    # _scatter_one_slab_fixed_d_basis (:1170-1213): dense basis_w (Nr,H,W)
+    # (:1194) lives for the whole scatter.
+    # (i) its build (:773-793): peak transient ~12P beyond basis_w itself
+    #     (measured by tracemalloc: ri_lo/ri_hi, rc_lo/rc_hi/span/t, yy/xx,
+    #     fancy-index copies).
+    basis_build = nr * P + 12 * P
+    # (ii) per-(ri,a) FFT step (_apply_kernel :1128-1166): w P, angular_mask P,
+    #     w_ang P, two kernel spectra 2S, product S + irfft2 out S + 1S pocketfft
+    #     internals (:1155-1166), crop astype P + w_ang*crop P.
+    fft_step = nr * P + 5 * P + 5 * S
+    gather_slab = r_loop + slab_cur + max(basis_build, fft_step)
+    # batch-boundary streaming holes-fill (:1357-1378): all batch slabs held
+    # (7P each) + per-slab int32 temporaries (~5P) + np.where colour copies 3P.
+    gather_fill = r_loop + 9 * P + batch * 7 * P + 9 * P
+    # render() tail after the gather (:1826-1921): accumulators 9P, output =
+    # output + output_bright 3P, alpha P, blend products 3P+3P+3P,
+    # output_linear copy 3P, (slab_w and, for OFF, the spectra still bound).
+    tail_res = r_pad + d * P + (0 if occlusion else 9 * S)
+    gather_tail = tail_res + accum + 3 * P + P + 9 * P + 3 * P
+    gather = max(gather_entry, gather_slab, gather_fill, gather_tail) + P + _SMALL_ALLOC  # + dmap
+
+    # --- over (ON, regime-b; _layered_composite :297-577) -----------------
+    over = 0
+    if occlusion:
+        # Resident: radial P, wedge P, 9 padded planes, slab_w; the 9
+        # spectra are DROPPED (S5, :381); gather returns 9P of accumulators.
+        r_o = 2 * P + 9 * Pp + d * P + accum
+        # entry: s_full P (+ ~9P selector temporaries, :106-143), s_active
+        # P/4, np.argmax(slab_w) copy D*P + int64 2P (:397).
+        over_entry = r_o + P + P // 4 + max(9 * P, d * P + 3 * P)
+        # held across the OVER loop: s_full P, argmax_d P, coc_px P,
+        # _interior_cover P, edge/boundary_band/s_reach 3 x P/4, acc_c 3P,
+        # acc_a P (:397-452).
+        hold = 9 * P
+        # dense OVER basis_w (:459) + its build transients.
+        over_basis = r_o + hold + nr * P + 12 * P
+        # per-slab (:461-547): H_d P (+2P where/maximum temporaries),
+        # premult 3P, premult_pad 3Pp (+ the previous slab's 3Pp until
+        # rebound), matte_pad Pp, conv_c 3P, conv_a P (:474-519); fused OVER
+        # scatter (_over_scatter_slab :238-255): prem_F 3S + matte_F S + buf S
+        # + ker_F S + irfft2 out S + 1S pocketfft (:238-251), w P, w_ang P,
+        # crop astype P + product P (:264-279, :252).
+        # The previous slab's conv_c 3P / conv_a P / one_minus_acc P stay bound
+        # (layer_premult_c, layer_alpha, one_minus_acc) until rebound: +5P.
+        stale_o = 5 * P
+        over_setup = (
+            r_o + hold + nr * P + stale_o + 3 * P + 3 * P + 6 * Pp + Pp + 4 * P
+        )
+        over_fft = (
+            r_o + hold + nr * P + stale_o + P + 3 * P + 3 * Pp + Pp + 3 * P + P
+            + 8 * S + 4 * P
+        )
+        # OVER fold temporaries (:545-547): 3P product + 3P new acc_c, 2P acc_a.
+        over_fold = (
+            r_o + hold + nr * P + stale_o + 3 * P + 3 * Pp + Pp + 4 * P + 8 * P
+        )
+        over_loop = max(over_setup, over_fft, over_fold)
+        # tail (:566-575): out_over 3P (+ divide/clip/astype temporaries ~4P),
+        # s*out_over 3P, (1-s)*off 3P + P, sum 3P, astype 3P.
+        over_tail = r_o + hold + 13 * P + 3 * P
+        over = max(over_entry, over_basis, over_loop, over_tail) + P + _SMALL_ALLOC  # + dmap
+
+    return {
+        "pipeline": pipeline,
+        "prep": prep,
+        "gather": gather,
+        "over": over,
+        "base": PLATFORM_BASE,
+        "total": pipeline + max(prep, gather, over) + PLATFORM_BASE,
+    }
+
+
+def _estimate_peak_bytes(
+    h: int, w: int, d: int, *,
+    occlusion: bool = False,
+    kernel_size: int = 183,
+    n_radial: int = 12,
+    slab_batch_size: int | None = None,
+) -> int:
+    """Projected peak bytes (``_estimate_peak_breakdown(...)["total"]``).
+
+    See :func:`_estimate_peak_breakdown` for the model and what it excludes.
+    """
+    return int(_estimate_peak_breakdown(
+        h, w, d, occlusion=occlusion, kernel_size=kernel_size,
+        n_radial=n_radial, slab_batch_size=slab_batch_size,
+    )["total"])
+
+
+def _pixel_guard(h: int, w: int, d: int | None = None, **kw) -> None:
+    """Fast-path early gate: reject > ``MAX_PIXELS`` before any allocation.
+
+    When ``d`` (and the ``_estimate_peak_bytes`` keywords) are given, the
+    ``--downres`` suggestion also fits the byte budget, so following it
+    passes both guards. Without them the suggestion is pixel-only.
     """
     if h * w > MAX_PIXELS:
+        sug = _pixel_downres(h, w)
+        if d is not None:
+            mem = _suggest_downres(h, w, d, _budget_bytes(), **kw)
+            if mem is not None:
+                sug = min(sug, mem)
         raise RuntimeError(
             f"Image too large: {h}x{w} = {h * w} pixels > {MAX_PIXELS}; "
-            f"pass --downres N to reduce."
+            f"pass --downres {sug} to reduce."
         )
-    peak_bytes = _estimate_peak_bytes(h, w, d)
+
+
+def _pixel_downres(h: int, w: int) -> int:
+    """Largest long edge (multiple of 64, >= 64) whose ``downres_array``
+    output (aspect-preserving, rounded) is within ``MAX_PIXELS``."""
+    long_edge = max(h, w)
+    le = max(64, int((long_edge * (MAX_PIXELS / (h * w)) ** 0.5) // 64) * 64)
+    while le > 64:
+        sc = le / long_edge
+        if max(1, round(h * sc)) * max(1, round(w * sc)) <= MAX_PIXELS:
+            break
+        le -= 64
+    return le
+
+
+def _suggest_downres(h: int, w: int, d: int, budget: int, **kw) -> int | None:
+    """Largest long edge (multiple of 64, >= 256) that fits ``budget``."""
+    long_edge = max(h, w)
+    scale_h, scale_w = h / long_edge, w / long_edge
+
+    def fits(le: int) -> bool:
+        hh = max(1, int(round(scale_h * le)))
+        ww = max(1, int(round(scale_w * le)))
+        return _estimate_peak_bytes(hh, ww, d, **kw) <= budget
+
+    lo, hi = 256 // 64, max(256 // 64, (long_edge - 1) // 64)
+    if not fits(lo * 64):
+        return None
+    while lo < hi:  # largest m in [lo, hi] with fits(m*64) (monotone)
+        mid = (lo + hi + 1) // 2
+        if fits(mid * 64):
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo * 64
+
+
+def _memory_guard(
+    h: int, w: int, d: int, *,
+    on_progress: _OnProgress = None,
+    occlusion: bool = False,
+    kernel_size: int = 183,
+    n_radial: int = 12,
+    slab_batch_size: int | None = None,
+) -> None:
+    """Reject renders projected to exceed the byte budget.
+
+    Runs ``_pixel_guard`` first (so direct 3-positional callers keep their
+    behaviour), then compares :func:`_estimate_peak_bytes` with
+    :func:`_budget_bytes`. Raises :class:`MemoryBudgetError` (a
+    ``RuntimeError``; the CLI exits 2) with a ``--downres`` suggestion.
+    """
+    kw = dict(occlusion=occlusion, kernel_size=kernel_size,
+              n_radial=n_radial, slab_batch_size=slab_batch_size)
+    _pixel_guard(h, w, d, **kw)
+    budget = _budget_bytes()
+    peak_bytes = _estimate_peak_bytes(h, w, d, **kw)
     # G1 bit-id: only emit the budget diagnostic when a caller registered
-    # a progress sink. CLI path (on_progress=None) intentionally skips
-    # this line so canonical-bench stdout stays byte-identical and the
-    # 38c75dd2... output md5 is preserved.
+    # a progress sink (CLI path keeps canonical-bench stdout byte-identical).
     if on_progress is not None:
         on_progress(
             f"  Memory budget: H={h} W={w} D={d} → "
-            f"~{peak_bytes / 1e9:.2f} GB peak; cap {MAX_BYTES / 1e9:.1f} GB."
+            f"~{peak_bytes / _GIB:.2f} GiB peak; cap {budget / _GIB:.1f} GiB."
         )
-    if peak_bytes > MAX_BYTES:
-        raise RuntimeError(
-            f"Render would exceed {MAX_BYTES / 1e9:.1f} GB budget "
-            f"(estimated {peak_bytes / 1e9:.2f} GB at "
-            f"H={h} W={w} D={d}); pass --downres N to reduce."
+    if peak_bytes > budget:
+        sug = _suggest_downres(h, w, d, budget, **kw)
+        if sug is not None:
+            hint = f"pass --downres {sug}"
+        elif budget < PLATFORM_BASE:
+            hint = ("budget below the fixed platform overhead; "
+                    "raise ISUMMICRON_MAX_BYTES")
+        else:
+            hint = "pass --downres N (smaller than 256)"
+        raise MemoryBudgetError(
+            f"Render would exceed {budget / _GIB:.1f} GiB budget "
+            f"(estimated {peak_bytes / _GIB:.2f} GiB at "
+            f"H={h} W={w} D={d}); {hint}"
+            f"{'' if sug is None and budget < PLATFORM_BASE else ' to reduce'}.",
+            estimated_bytes=peak_bytes, budget_bytes=budget,
+            suggested_downres=sug,
         )
 
 
@@ -428,28 +667,22 @@ def _compute_region_aware_bright_weight(
 
 
 # ---------------------------------------------------------------------------
-# Synthetic radial defocus map
-# ---------------------------------------------------------------------------
-
-def build_defocus_map(h: int, w: int) -> np.ndarray:
-    """Quadratic radial defocus: 0 at center, 1 at corners. Shape (H, W) float32."""
-    cy, cx = (h - 1) / 2.0, (w - 1) / 2.0
-    max_dist = cy ** 2 + cx ** 2
-    if max_dist < 1e-6:
-        # Degenerate case (e.g. 1x1 image): no defocus possible
-        return np.zeros((h, w), dtype=np.float32)
-    ys = np.arange(h, dtype=np.float32)
-    xs = np.arange(w, dtype=np.float32)
-    dy = ys - cy
-    dx = xs - cx
-    # Broadcast: (H, 1) + (1, W)
-    d = (dy[:, None] ** 2 + dx[None, :] ** 2) / max_dist
-    return np.clip(d, 0.0, 1.0).astype(np.float32)
-
-
-# ---------------------------------------------------------------------------
 # Load 4D tensor
 # ---------------------------------------------------------------------------
+
+def _is_default_tensor(path) -> bool:
+    """True iff ``path`` resolves to the wheel-shipped canonical tensor.
+
+    Never raises: a missing artifact / unresolvable path is simply "not the
+    default" (so the schema_version warning still fires for foreign files).
+    """
+    try:
+        from summicron.render._artifacts import default_tensor_path
+
+        return Path(path).resolve() == default_tensor_path().resolve()
+    except (OSError, ValueError, FileNotFoundError, TypeError):
+        return False
+
 
 def load_tensor(path: str | Path) -> dict:
     """Load .npz with keys: kernels(R,D,H,W), radial_edges(R+1), defocus_ratios(D).
@@ -506,7 +739,9 @@ def load_tensor(path: str | Path) -> dict:
                 f"load_tensor({path}): unsupported schema_version={sv_str!r}; "
                 f"supported={list(_SUPPORTED_TENSOR_SCHEMAS)}"
             )
-    else:
+    elif not _is_default_tensor(path):
+        # CLI-1b: the wheel-shipped canonical tensor is known-legacy; only
+        # foreign tensors warrant the notice.
         warnings.warn(
             f"load_tensor({path}): tensor has no `schema_version` key; "
             f"assuming legacy 1.0 layout. Future tensors should declare "
@@ -873,20 +1108,16 @@ def compute_slab_weights(
     # Row-normalize so Σ_d slab_w[d](x) = 1 exactly (G5 gate).
     wsum = slab_w.sum(axis=0)
     wsum = np.maximum(wsum, 1e-12)
+    # R-native-mem item 2 (in-place normalise) was REVERTED by its own keep rule:
+    # the 2048 tracemalloc ablation measured an in-call peak drop of 9P
+    # (113 MB), not the >= 2*D*P - 1 MiB (276 MB) the spec requires, because
+    # rebinding ``slab_w`` already frees the input before the ``astype`` copy.
+    # See doc/plan/phase2/section17_native-memory/coder-mem-report.md.
     slab_w = slab_w / wsum[None, :, :]
     return slab_w.astype(np.float32)
 
 
-# N_BINS is the angular wedge count for kernel rotation in the legacy
-# scatter path. Orthogonal to the D-axis kernel grid (tensor D).
-# Render-time quantization of defocus, not tensor geometry.
-N_BINS = 8
 N_ANG = 8
-# P1.9.1: knee of the per-pixel α(defocus) blend. α=1 at dmap=0 (pure sharp
-# input) and α=0 at dmap ≥ D_KNEE (full convolve). Must satisfy 0 < D_KNEE ≤ 1
-# or the blend plateau degenerates (D_KNEE>1 leaves an α floor; D_KNEE=0 with
-# dmap=0 produces NaN that the post-blend assert catches).
-D_KNEE = 0.10
 
 
 def _build_basis_kernel(
@@ -897,7 +1128,7 @@ def _build_basis_kernel(
 
     Input is a fixed `ri` (basis index into the raw R=12 tensor), output is
     one kernel; the per-pixel blend happens later inside the basis scatter
-    functions (`_legacy_scatter_basis` / `_scatter_one_slab_fixed_d_basis`)
+    functions (`_scatter_one_slab_fixed_d_basis`)
     via `_radial_basis_weights[ri, y, x]`.
 
     D-axis stance: D-axis remains 2-tap bilinear at the same scalar
@@ -932,6 +1163,26 @@ def _build_basis_kernel(
     # --- Tail: zoom + L1/peak renorm. ---
     if psf_norm == "peak":
         kernel_base = kernel_base / max(float(kernel_base.max()), 1e-10)
+
+    # Q-b R-infocus-delta: the S2 d0 delta survives cubic ndimage_zoom as a
+    # sub-pixel-offset blob (zoom grid is not centre-aligned). A STRICT delta
+    # (exactly one nonzero, at (kH//2, kW//2)) maps to an
+    # exact centred delta at the scaled size. Off-centre deltas and blended
+    # (d_t > 0) kernels fall through to the ordinary zoom.
+    # d>=1 centring → B4 / R-highlight-guard (cubic misfires as is_delta on
+    # 52-64/132 slices; area resample loses ~70% bright energy; Q-b R1/R2).
+    if pix_scale < 0.95:
+        nz = np.argwhere(kernel_base != 0)
+        if (
+            len(nz) == 1
+            and int(nz[0][0]) == kH // 2
+            and int(nz[0][1]) == kW // 2
+            and np.isfinite(kernel_base[kH // 2, kW // 2])
+            and kernel_base[kH // 2, kW // 2] > 0
+        ):
+            from summicron.psf_model.downscale_tensor import _make_delta
+
+            return _make_delta(scaled_ksize)
 
     if pix_scale < 0.95:
         pre_zoom_l1 = float(kernel_base.sum())
@@ -991,17 +1242,17 @@ def _build_image_fft_state(
     Skeptic concern #3 carve-out: the ``is_delta`` branch inside
     ``_apply_kernel`` does NOT use the hoisted image FFTs (it short-
     circuits to a mask-modulated identity copy via the dedicated
-    ``img_F`` only). Measured delta-fraction on the canonical bench
-    (``IMG_6915`` at downres 512, lidar+macos-HDR) is **6.06 %**
-    (``8/132`` ``(d, ri)`` pairs); the 1.7× hoist multiplier holds.
+    ``img_F`` only). Measured ``is_delta`` fraction of the legacy
+    resampled kernels on the canonical bench is 8/132 ``(d, ri)`` pairs
+    at downres 512 — but those are d=1 slices, NOT the d0 delta (at 2048
+    the legacy d0 delta is smeared off-centre and is not ``is_delta``;
+    see Q-b R-infocus-delta). The 1.7× hoist
+    multiplier holds.
     """
     H_pad, W_pad = img_padded.shape[:2]
-    full_h = H_pad + int(kernel_size) - 1
-    full_w = W_pad + int(kernel_size) - 1
-    fshape = (
-        sp_fft.next_fast_len(full_h, real=True),
-        sp_fft.next_fast_len(full_w, real=True),
-    )
+    geo = _fft_geometry(H_pad, W_pad, kernel_size, padded=True)
+    full_h, full_w = geo["full_shape"]
+    fshape = geo["fshape"]
     # mode="same" crop: scipy's _apply_conv_mode picks centered slices
     # `(full_h - H_pad) // 2 : (full_h - H_pad) // 2 + H_pad`. Since
     # full_h = H_pad + k - 1, that resolves to `(k-1)//2 : (k-1)//2+H_pad`.
@@ -1056,7 +1307,7 @@ def _apply_kernel(
     """Apply kernel_base via the is_delta/angular-scatter body.
 
     P1.10.4 C3: now exclusively serves the basis scatter paths
-    (`_legacy_scatter_basis` and `_scatter_one_slab_fixed_d_basis`).
+    (`_scatter_one_slab_fixed_d_basis`).
     Renamed in C3a from `_apply_slab_kernel` to `_apply_kernel` (slab path
     fully removed; the "slab" qualifier is no longer meaningful).
 
@@ -1167,58 +1418,6 @@ def _apply_kernel(
             weight_sum += w_ang
 
 
-def _legacy_scatter_basis(
-    img_padded, img_diffuse_padded, img_bright_padded,
-    kernels, defocus_ratios,
-    radial_frac_map, r_centers, wedge_idx,
-    dmap, n_bins, bin_width,
-    kH, kW, pad, pix_scale, scaled_ksize, psf_norm,
-    H, W,
-    output, output_bright, weight_sum, delta_weight_sum,
-    *,
-    fft_state: dict | None = None,
-):
-    """P1.10.1 per-pixel radial-basis scatter — legacy (per-bin) path.
-
-    Per-r_basis kernels are rotated PER WEDGE inside `_apply_kernel`
-    exactly as today. Loop nesting `for ri: for a: for c` is mathematically
-    equivalent to `for a: for ri: for c` for `output += w * conv`
-    accumulation (commutative `+=` modulo float32 round-off; Skeptic
-    Probe 5). Do NOT collapse wedges and r_basis into a single loop —
-    that would force is_delta evaluation on a blended-across-r kernel
-    and could mis-classify boundary cases. is_delta MUST be evaluated
-    per-(ri, d-blend) on a raw-tensor kernel BEFORE blend.
-
-    Per-pixel radial weight `basis_w[ri, y, x]` (from
-    `_radial_basis_weights`) is multiplied with the existing `w_bin`
-    to drive each `_apply_kernel` accumulation. P1.10.4 C3:
-    slab counterpart deleted; this is the sole legacy scatter path.
-    """
-    Nr = int(len(r_centers))
-    basis_w = _radial_basis_weights(radial_frac_map, r_centers)  # (Nr, H, W)
-    for b in range(n_bins):
-        d_center = (b + 0.5) * bin_width
-        dist = np.abs(dmap - d_center)
-        tri_width = 2.0 * bin_width
-        w_bin = np.maximum(1.0 - dist / tri_width, 0.0).astype(np.float32)
-        if w_bin.max() < 1e-8:
-            continue
-        for ri in range(Nr):
-            w = (w_bin * basis_w[ri]).astype(np.float32)
-            if w.max() < 0.01:
-                continue
-            kernel_base = _build_basis_kernel(
-                ri, d_center, False, defocus_ratios, kernels,
-                kH, kW, psf_norm, pix_scale, scaled_ksize,
-            )
-            _apply_kernel(
-                kernel_base, w, img_padded, img_diffuse_padded, img_bright_padded,
-                wedge_idx, pad, H, W, psf_norm,
-                output, output_bright, weight_sum, delta_weight_sum,
-                fft_state=fft_state,
-            )
-
-
 def _scatter_one_slab_fixed_d_basis(
     d_idx, img_diffuse_pad, img_bright_pad, img_full_pad,
     kernels, defocus_ratios,
@@ -1265,38 +1464,232 @@ def _scatter_one_slab_fixed_d_basis(
         )
 
 
+def _layered_gather_diffuse(
+    *,
+    depth_m, slab_w, img_lin,
+    img_padded, img_diffuse_padded, img_bright_padded,
+    kernels, defocus_ratios, radial_frac_map, r_centers, wedge_idx,
+    kH, kW, pad, pix_scale, scaled_ksize, psf_norm, H, W,
+    fft_state, slab_batch_size, on_progress, cancel,
+    emit_log=True,
+):
+    """The P1.12 depth-layered-gather diffuse assembly — the LIVE OFF path.
+
+    R-occlusion-layering round-2 fix: extracted VERBATIM from the OFF
+    ``else:`` (layered) block inside :func:`render` so that BOTH the OFF
+    path AND ``_layered_composite`` regime-a call the *same code* (not a copy).
+    The probe-round-1 post-mortem caught the round-1 bug where
+    ``_layered_composite`` reimplemented only the bare ``output += out_d*mix``
+    PoU sum and silently omitted the slab-batching driver, the streaming
+    holes-fill (``best_d_color``/``argmin``), and the per-batch GC — so the ON
+    path re-rendered the entire diffuse image differently from OFF even where
+    the selector ``s≈0``. Reusing this helper makes regime-a bit-faithful to
+    OFF by construction.
+
+    This is a PURE EXTRACTION: identical float ops, identical iteration order,
+    identical accumulators. The G1 pin md5 is preserved.
+
+    Returns ``(output, output_bright, weight_sum, delta_weight_sum,
+    acc_alpha)``. ``emit_log`` gates the two ``_emit`` diagnostics so the
+    OFF path keeps its exact stdout (G1) while the ON regime-a call stays
+    quiet (the ON branch prints its own occlusion log instead).
+    """
+    D_gate = slab_w.shape[0]
+
+    output = np.zeros_like(img_lin)
+    output_bright = np.zeros_like(img_lin)
+    weight_sum = np.zeros((H, W), dtype=np.float32)
+    delta_weight_sum = np.zeros((H, W), dtype=np.float32)
+
+    # Porter-Duff over accumulator state.
+    acc_alpha = np.zeros((H, W), dtype=np.float32)
+
+    # R-perf-1 I1+I2: slab-batching driver + streaming holes-fill.
+    if slab_batch_size is None:
+        batch_size = _SLAB_BATCH_SIZE
+    else:
+        batch_size = int(slab_batch_size)
+    if batch_size < 1:
+        raise ValueError(
+            f"slab_batch_size must be >= 1, got {batch_size!r}"
+        )
+
+    argmax_d_full = np.argmax(slab_w, axis=0).astype(np.int32)
+    HUGE = np.int32(D_gate * 10)
+
+    best_d_dist = np.full((H, W), HUGE, dtype=np.int32)
+    best_d_color_d = np.zeros((H, W, 3), dtype=np.float32)
+    best_d_color_b = np.zeros((H, W, 3), dtype=np.float32)
+
+    effective_cap = max(_MAX_ACTIVE_SLABS, D_gate // 2)
+    n_batches = (D_gate + batch_size - 1) // batch_size
+    if batch_size * n_batches > max(effective_cap * 4, D_gate * 4):
+        raise ValueError(
+            f"slab_batch_size * n_batches = {batch_size * n_batches} "
+            f"exceeds hard upper bound on (D_gate={D_gate}, "
+            f"effective_cap={effective_cap}); pick smaller "
+            f"--slab-batch-size."
+        )
+    active_count = 0
+    _warned_cap = False
+    from summicron.render.api import CancelledError
+
+    for batch_start in range(0, D_gate, batch_size):
+        batch_end = min(batch_start + batch_size, D_gate)
+        batch_alpha: list[np.ndarray | None] = [None] * (batch_end - batch_start)
+        batch_out_d: list[np.ndarray | None] = [None] * (batch_end - batch_start)
+        batch_out_b: list[np.ndarray | None] = [None] * (batch_end - batch_start)
+
+        for d in range(batch_start, batch_end):
+            if cancel is not None and cancel.is_set():
+                raise CancelledError(
+                    f"render cancelled at slab {d}/{D_gate}"
+                )
+            if on_progress is not None:
+                on_progress(f"  Slab {d + 1}/{D_gate}")
+            sw_d = slab_w[d]  # (H, W)
+            if float(sw_d.max()) < _EMPTY_SKIP_THRESH:
+                continue  # empty-skip
+            active_count += 1
+            if active_count > effective_cap and not _warned_cap:
+                warnings.warn(
+                    f"layered_gather: exceeded _MAX_ACTIVE_SLABS={effective_cap} "
+                    f"(D={D_gate}, active_count={active_count}); continuing — "
+                    f"possible pathological depth spread.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                _warned_cap = True
+
+            out_d = np.zeros((H, W, 3), dtype=np.float32)
+            out_b_d = np.zeros((H, W, 3), dtype=np.float32)
+            wsum_d = np.zeros((H, W), dtype=np.float32)
+            delta_wsum_d = np.zeros((H, W), dtype=np.float32)
+
+            with sp_fft.set_workers(-1):
+                _scatter_one_slab_fixed_d_basis(
+                    d_idx=d,
+                    img_diffuse_pad=img_diffuse_padded,
+                    img_bright_pad=img_bright_padded,
+                    img_full_pad=img_padded,
+                    kernels=kernels, defocus_ratios=defocus_ratios,
+                    radial_frac_map=radial_frac_map,
+                    r_centers=r_centers, wedge_idx=wedge_idx,
+                    kH=kH, kW=kW, pad=pad, pix_scale=pix_scale,
+                    scaled_ksize=scaled_ksize, psf_norm=psf_norm,
+                    H=H, W=W,
+                    output=out_d, output_bright=out_b_d,
+                    weight_sum=wsum_d, delta_weight_sum=delta_wsum_d,
+                    cancel=cancel,
+                    fft_state=fft_state,
+                )
+
+            # Per-slab normalize by spatial-slab weight_sum (radial partition).
+            if psf_norm == "l1":
+                wsum_d_safe = np.maximum(wsum_d, 1e-8)
+                for c in range(3):
+                    out_d[:, :, c] /= wsum_d_safe
+                    out_b_d[:, :, c] /= wsum_d_safe
+
+            # Gather weight: slab_w[d] at the output.
+            alpha_d = sw_d.astype(np.float32)
+            mix = alpha_d[..., None]
+            output += out_d * mix
+            output_bright += out_b_d * mix
+            weight_sum += wsum_d
+            delta_weight_sum += delta_wsum_d
+            acc_alpha += alpha_d  # partition-of-unity => sums to 1 on covered pixels
+
+            local = d - batch_start
+            batch_alpha[local] = alpha_d
+            batch_out_d[local] = out_d
+            batch_out_b[local] = out_b_d
+
+        # I2 streaming-holes-fill: update running argmin from this batch.
+        for local in range(batch_end - batch_start):
+            d_global = batch_start + local
+            alpha_d = batch_alpha[local]
+            if alpha_d is None:
+                continue  # empty-skipped slab; never a valid donor.
+            sw_d = slab_w[d_global]
+            validity_d = sw_d > _EMPTY_SKIP_THRESH  # (H, W)
+            dist_d_for_this = np.abs(
+                np.int32(d_global) - argmax_d_full
+            ).astype(np.int32)
+            dist_masked_d = np.where(validity_d, dist_d_for_this, HUGE)
+            better = dist_masked_d < best_d_dist
+            if better.any():
+                best_d_dist = np.where(better, dist_masked_d, best_d_dist)
+                better_3 = better[..., None]
+                best_d_color_d = np.where(
+                    better_3, batch_out_d[local], best_d_color_d
+                )
+                best_d_color_b = np.where(
+                    better_3, batch_out_b[local], best_d_color_b
+                )
+
+        del batch_alpha, batch_out_d, batch_out_b
+        gc.collect()
+
+    if emit_log:
+        _emit(
+            on_progress,
+            f"  layered_gather: active_slabs={active_count}/{D_gate}, "
+            f"acc_alpha mean={float(acc_alpha.mean()):.3f}, "
+            f"holes={int((acc_alpha < 0.02).sum())} pixels"
+        )
+
+    # Holes-fill (I6).
+    holes = acc_alpha < 0.02
+    if holes.any():
+        has_valid = best_d_dist < HUGE  # (H, W)
+        fallback = img_lin
+        valid_and_holes = (holes & has_valid)[..., None]
+        output = np.where(valid_and_holes, best_d_color_d, output)
+        output_bright = np.where(valid_and_holes, best_d_color_b, output_bright)
+        noone_and_holes = (holes & ~has_valid)[..., None]
+        output = np.where(noone_and_holes, fallback, output)
+        output_bright = np.where(noone_and_holes, 0.0, output_bright)
+        acc_alpha = np.where(holes & has_valid, np.float32(1.0), acc_alpha)
+        acc_alpha = np.where(holes & ~has_valid, np.float32(1.0), acc_alpha)
+
+    return output, output_bright, weight_sum, delta_weight_sum, acc_alpha
+
+
 def render(
     image_srgb: np.ndarray,
     tensor: dict,
-    n_bins: int = N_BINS,
-    defocus_map: np.ndarray | None = None,
-    depth_m: np.ndarray | None = None,
+    *,
+    depth_m: np.ndarray,
     psf_norm: str = "l1",
     hdr_source: str = "none",
     bright_thresh: float = 1e9,
-    layered_gather: object = _UNSET,
-    r_blend_strength: object = _UNSET,
     bright_pass_region_size: int = 31,
     bright_pass_floor: float = 0.10,
     bright_pass_norm_pct: float = 99.0,
-    radial_blend_mode: object = _UNSET,
-    *,
+    occlusion_compositing: str = "off",
     slab_batch_size: int | None = None,
     on_progress: _OnProgress = None,
     cancel: threading.Event | None = None,
+    stats: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Bin-and-convolve render pipeline.
+
+    ``stats`` (CLI-1b): opt-in diagnostics sink. When a dict is passed it is
+    filled with ``bright_pixels_pct`` (float), ``alpha_mean`` (float) and
+    ``acc_alpha`` (the full per-pixel ``(H, W)`` accumulated-alpha map, on
+    both the occlusion-ON and OFF paths). Q-a adds (references, no copies):
+    ``alpha`` ((H, W) identity-snap alpha), ``dmap`` ((H, W) defocus map) and
+    ``img_lin`` ((H, W, 3) linear reference input); ``defocus_ratios`` is
+    surfaced by ``_run_render_pipeline`` via its private ``_eval_sink``, not
+    by this ``stats`` dict. The return arity stays 2.
 
     Parameters
     ----------
     image_srgb : (H, W, 3) float32 in [0, 1] sRGB gamma
     tensor : dict from load_tensor()
-    n_bins : number of defocus bins
-    defocus_map : (H, W) float32 in [0, 1], optional depth-based defocus map.
-        If provided, used instead of the synthetic radial defocus map.
-    depth_m : (H, W) float32 in meters, optional distance-indexed depth map.
-        Mutually exclusive with defocus_map. Requires tensor with
-        object_distances_m metadata.
+    depth_m : (H, W) float32 in meters, distance-indexed depth map (required).
+        Requires tensor with object_distances_m metadata.
     psf_norm : {"l1", "peak"}, default "l1"
         Render-time PSF normalization mode. "l1" (default) keeps kernels L1-
         normalized and averages via a post-convolution weight-sum divide —
@@ -1324,29 +1717,12 @@ def render(
     caller is responsible for tonemap + gamma + cast.
 
     P1.9.1: a per-pixel α(defocus) blend runs after the convolve accumulator
-    and peak-mode auto-exposure divide. With ``α = cos²(π/2 · min(dmap/D_KNEE,
-    1))`` (module constant ``D_KNEE = 0.10``), in-focus pixels (``dmap=0``)
+    and peak-mode auto-exposure divide. With ``α = cos²(π/2 · min(dmap/D_KNEE_LAYERED,
+    1))`` (module constant ``D_KNEE_LAYERED = 0.10``), in-focus pixels (``dmap=0``)
     return the linearized input bit-exactly while out-of-focus pixels
-    (``dmap ≥ D_KNEE``) see the raw convolved output; intermediate defocus
+    (``dmap ≥ D_KNEE_LAYERED``) see the raw convolved output; intermediate defocus
     cross-fades smoothly with C¹ continuity at both endpoints. The blend
     happens once in linear space so LDR and HDR paths share the same math.
-
-    Fallback behavior
-    -----------------
-    Layered gather (``--layered-gather`` / canonical bench path) is the sole
-    distance-indexed render path post-P1.10.4 and requires BOTH ``depth_m``
-    AND ``tensor['object_distances_m']`` to be present. If either is
-    missing — typically when a synthetic-fixture caller passes
-    ``defocus_map=`` directly without a distance map — ``render()`` silently
-    falls back to the legacy basis-scatter path at the silent-fallback
-    branch (``convolve.py`` ``_layered_active`` gate, ~ line 1037-1043) AND
-    emits a ``DeprecationWarning``. The fallback path routes through
-    ``_legacy_scatter_basis`` (private; named for the slab/legacy era and
-    slated for rename in CLI-1). The fallback branch is on the chopping
-    block: 273 ``defocus_map=`` test callsites still trigger it, and
-    migration to canonical ``depth_m + object_distances_m`` is queued for
-    CLI-1. Distance-indexed CLI invocations (canonical bench) always
-    supply both arguments, so the layered path is taken for them.
 
     Sentinel idiom note (``bright_thresh=1e9``)
     -------------------------------------------
@@ -1357,32 +1733,33 @@ def render(
     callers and synthetic fixtures bit-identical"). 13 testsites currently
     pass this sentinel explicitly; refactoring to a typed sentinel
     (``BRIGHT_THRESH_DISABLED = ...`` constant or ``bright_pass: bool``
-    flag) is deferred to CLI-1 alongside the kwarg hard-removal sweep.
-    See locked-spec-P1_10_5.md § 9 "Known debt left in repo" item 4.
+    flag) is deferred.
 
-    .. deprecated:: P1.10.5
-        ``r_blend_strength`` is a silently-accepted noop post-P1.10.4 (slab
-        path deleted; basis path is sole radial-blend kernel). Passing the
-        kwarg now emits a ``DeprecationWarning``. Hard removal queued for
-        CLI-1. Drop the kwarg from ``render()`` calls.
-
-    .. deprecated:: P1.10.5
-        ``radial_blend_mode`` is a silently-accepted noop post-P1.10.4
-        (slab path deleted; basis is the sole radial-blend kernel). Passing
-        the kwarg now emits a ``DeprecationWarning``. Hard removal queued
-        for CLI-1. Drop the kwarg from ``render()`` calls.
-
-    .. deprecated:: P1.10.5
-        ``layered_gather`` is a silently-accepted noop post-P1.10.4 (layered
-        gather is the SOLE rendering path; the False-path body was deleted).
-        Passing the kwarg now emits a ``DeprecationWarning``. Hard removal
-        queued for CLI-1. Drop the kwarg from ``render()`` calls.
     """
+    if stats is not None and not isinstance(stats, dict):
+        raise TypeError(
+            f"stats must be a dict or None; got {type(stats).__name__}"
+        )
     # P1.7: validate psf_norm mode up-front.
     if psf_norm not in ("l1", "peak"):
         raise ValueError(
             f"psf_norm must be 'l1' or 'peak'; got {psf_norm!r}"
         )
+
+    # CLI-1a A3.1b: kernel-L1 guard on the raw tensor (replaces the deleted
+    # split-energy gate's only unique catch). Zero slices are exempt.
+    if psf_norm == "l1":
+        ks = np.asarray(tensor["kernels"]).sum(axis=(-2, -1))
+        bad = (~np.isfinite(ks)) | ((ks != 0) & (np.abs(ks - 1.0) > 0.05))
+        if bad.any():
+            _bv = ks[bad]
+            _fin = _bv[np.isfinite(_bv)]
+            _rep = float(_fin[np.argmax(np.abs(_fin - 1.0))]) if _fin.size else float(_bv[0])
+            _nf = "" if _fin.size == _bv.size else " (non-finite NaN/Inf kernel sum present)"
+            raise RuntimeError(
+                f"Gate FAIL: kernel energy ratio {_rep:.4f}{_nf} "
+                f"(expected L1-normalized kernels)"
+            )
 
     # P1.11 R1: negative bright_thresh is coerced to 0 (bright path then covers
     # the full image). Rejecting non-finite outright — NaN/Inf makes no sense.
@@ -1399,58 +1776,26 @@ def render(
             f"hdr_source must be 'none' or 'macos', got {hdr_source!r}"
         )
 
-    # P1.10.4 C2: r_blend_strength validator deleted; kwarg is now a silently
-    # accepted noop (vestigial). P1.10.4 C3: slab POU build deleted; the
-    # `_taper_half` constant is gone. See locked-spec-P1_10_4.md § 9.
+    # R-occlusion-layering: validate occlusion_compositing mode. "off"
+    # (default) is the bit-identical kill-switch; "on" dispatches to the
+    # parallel _layered_composite() helper (premultiplied-alpha layered OVER).
+    if occlusion_compositing not in ("off", "on"):
+        raise ValueError(
+            f"occlusion_compositing must be 'off' or 'on', "
+            f"got {occlusion_compositing!r}"
+        )
 
-    # P1.10.4 C4b: --radial-blend-mode flag deleted; validator dropped.
-    # `radial_blend_mode` kwarg survives on render() as a silently-accepted
-    # noop (default "basis") for ABI preservation. See locked-spec-P1_10_4.md
-    # § 9 C4b.
-
-    # P1.10.5 C1: hybrid kwarg DeprecationWarning. Resolve `_UNSET` sentinels
-    # to historical defaults BEFORE the warning gate so default-call behavior
-    # is unchanged (bit-identity to canonical bench md5 preserved). The
-    # `is not _UNSET` gate fires only when a caller passes the kwarg
-    # explicitly. Hard removal queued for CLI-1. See locked-spec-P1_10_5.md
-    # § 3 C1 + § 7 risk #1.
-    if r_blend_strength is not _UNSET:
-        warnings.warn(
-            "render(r_blend_strength=) is deprecated and will be removed in "
-            "CLI-1. The kwarg has been a silently-accepted noop since "
-            "P1.10.4 (slab path deleted). Drop the kwarg from render() "
-            "calls.",
-            DeprecationWarning,
-            stacklevel=2,
+    # R-occ-on-fixes F4: peak-normalised kernels give matte alpha > 1, which
+    # the layered OVER compositor cannot handle -> fall back to the OFF path.
+    if occlusion_compositing == "on" and psf_norm == "peak":
+        _msg = (
+            "--psf-norm peak is incompatible with --occlusion-compositing on "
+            "(peak-normalised matte alpha > 1); falling back to off."
         )
-        r_blend_strength = 0.20
-    else:
-        r_blend_strength = 0.20
-    if radial_blend_mode is not _UNSET:
-        warnings.warn(
-            "render(radial_blend_mode=) is deprecated and will be removed in "
-            "CLI-1. The kwarg has been a silently-accepted noop since "
-            "P1.10.4 (slab path deleted; basis is the sole radial-blend "
-            "kernel). Drop the kwarg from render() calls.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        radial_blend_mode = "basis"
-    else:
-        radial_blend_mode = "basis"
-    if layered_gather is not _UNSET:
-        warnings.warn(
-            "render(layered_gather=) is deprecated and will be removed in "
-            "CLI-1. The kwarg has been a silently-accepted noop since "
-            "P1.10.4 (layered gather is the SOLE rendering path; the "
-            "False-path body was deleted). Drop the kwarg from render() "
-            "calls.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        layered_gather = True
-    else:
-        layered_gather = True
+        warnings.warn(_msg, RuntimeWarning, stacklevel=2)
+        if on_progress is not None:  # CLI (None) gets the warning only
+            on_progress("  " + _msg)
+        occlusion_compositing = "off"
 
     # P1.10: validate region-aware bright-pass kwargs.
     if (
@@ -1498,12 +1843,6 @@ def render(
     else:
         raise ValueError(f"Unsupported dtype {image_srgb.dtype}; expected float32 or uint8")
 
-    # P1.2: mutual exclusion gate
-    if depth_m is not None and defocus_map is not None:
-        raise ValueError(
-            "depth_m and defocus_map are mutually exclusive; provide one or neither"
-        )
-
     H, W = image_srgb.shape[:2]
 
     # Step 2: linearize (skip if input is already extended-linear HDR)
@@ -1512,27 +1851,21 @@ def render(
     else:
         img_lin = image_srgb.astype(np.float32, copy=False)
 
-    # P1.2: convert depth_m → defocus_map via entry-point interp
-    if depth_m is not None:
-        object_distances_m = tensor.get("object_distances_m")
-        if object_distances_m is None:
-            raise ValueError(
-                "depth_m requires tensor with object_distances_m metadata"
-            )
-        defocus_ratios_axis = tensor["defocus_ratios"]
-        defocus_map = np.interp(
-            depth_m, object_distances_m, defocus_ratios_axis
-        ).astype(np.float32)
-
-    # Step 4: defocus map
-    if defocus_map is not None:
-        if defocus_map.shape != (H, W):
-            raise ValueError(
-                f"defocus_map shape {defocus_map.shape} != image (H,W) = ({H}, {W})"
-            )
-        dmap = defocus_map.astype(np.float32)
-    else:
-        dmap = build_defocus_map(H, W)
+    # depth_m -> dmap via entry-point interp
+    object_distances_m = tensor.get("object_distances_m")
+    if object_distances_m is None:
+        raise ValueError(
+            "depth_m requires tensor with object_distances_m metadata"
+        )
+    defocus_ratios_axis = tensor["defocus_ratios"]
+    depth_m = np.asarray(depth_m)
+    if depth_m.shape != (H, W):
+        raise ValueError(
+            f"depth_m shape {depth_m.shape} != image (H,W) = ({H}, {W})"
+        )
+    dmap = np.interp(
+        depth_m, object_distances_m, defocus_ratios_axis
+    ).astype(np.float32)
 
     kernels = tensor["kernels"]         # (R, D, kH, kW)
     radial_edges = tensor["radial_edges"]
@@ -1540,11 +1873,17 @@ def render(
 
     kH, kW = kernels.shape[2], kernels.shape[3]
 
-    # P1.audit Item 6: byte-budget memory guard, called AFTER tensor load
-    # so D is known. The on-entry "Memory budget" line is routed through
-    # _emit() and silenced on the CLI path so canonical-bench stdout (and
-    # therefore G1 md5) is bit-id preserved.
-    _memory_guard(H, W, int(kernels.shape[1]), on_progress=on_progress)
+    # P1.audit Item 6 / R-native-mem item 7: pixel fast-path gate here (same
+    # call site as before: error order unchanged, nothing large allocated yet).
+    # The byte-budget guard runs below, once ``scaled_ksize`` is known and
+    # before ``np.pad`` and every large allocation.
+    # Suggestion also fits the byte budget (guard defaults for kernel size).
+    _pixel_guard(
+        H, W, int(kernels.shape[1]),
+        occlusion=(occlusion_compositing == "on"),
+        n_radial=int(kernels.shape[0]),
+        slab_batch_size=slab_batch_size,
+    )
 
     # ------------------------------------------------------------------
     # P0.2: radial/depth decoupling. Build a per-pixel spatial
@@ -1585,32 +1924,21 @@ def render(
     else:
         theta_map = np.arctan2(ys_r[:, None], xs_r[None, :])  # [-pi, pi]
         wedge_idx = ((theta_map + np.pi) / (2 * np.pi) * N_ANG).astype(np.int32) % N_ANG
+        del theta_map  # R-native-mem item 5: never read again (~1 plane)
 
     r_centers = 0.5 * (radial_edges[:-1] + radial_edges[1:])
-    # P1.10.4 C3: spatial slab POU build deleted. The slab path
-    # (`_build_slab_kernel`, `_legacy_scatter_slab`, `_scatter_one_slab_fixed_d`)
-    # was removed in C3. The basis path uses `_radial_basis_weights(radial_frac_map,
-    # r_centers)` directly and never consumed `_norm_slab_weights` /
-    # `n_slabs` / `slab_idx`. The `_LAST_NORM_SLAB_WEIGHTS` test-introspection
-    # global is also gone; the only remaining consumers were r_blend tests
-    # deleted in C2.
-
-    # F1 interaction warning: flat-zero depth map means off-axis pixels
-    # will now (correctly) select the (r>=1, d=0) kernels, which post-P0.1
-    # are NOT near-delta and may trip the energy gate on bubble fixtures.
-    if defocus_map is not None and float(dmap.max()) < 1e-4:
-        warnings.warn(
-            "P0.2: flat-zero defocus map with P0.1 F1 unresolved; "
-            "corners may show Wiener kernel pathology",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+    # Radial kernel blend uses `_radial_basis_weights(radial_frac_map, r_centers)`
+    # directly (per-pixel partition of unity); no spatial slab POU is built.
 
     # Pixel-scale: shrink kernels when rendering images smaller than corpus ref.
     # Only activate when corpus_ref_long_edge is explicitly present in the
     # tensor dict (set by load_tensor or by the caller).
     corpus_ref = tensor.get("corpus_ref_long_edge")
     if corpus_ref is not None:
+        if not (np.isfinite(corpus_ref) and corpus_ref > 0):
+            raise ValueError(
+                f"corpus_ref_long_edge must be finite and > 0; got {corpus_ref!r}"
+            )
         pix_scale = max(H, W) / corpus_ref
     else:
         pix_scale = 1.0  # no scaling when metadata absent (hand-crafted tensors)
@@ -1619,6 +1947,18 @@ def render(
     else:
         scaled_ksize = kH
     pad = scaled_ksize // 2
+
+    # R-native-mem item 7: byte-budget guard (D is known; the "Memory budget"
+    # line is routed through ``on_progress`` and silenced on the CLI path so
+    # canonical-bench stdout, and therefore the G1 md5 pins, are unchanged).
+    _memory_guard(
+        H, W, int(kernels.shape[1]),
+        on_progress=on_progress,
+        occlusion=(occlusion_compositing == "on"),
+        kernel_size=scaled_ksize,
+        n_radial=int(kernels.shape[0]),
+        slab_batch_size=slab_batch_size,
+    )
 
     # Mirror-pad image
     img_padded = np.pad(img_lin, ((pad, pad), (pad, pad), (0, 0)), mode="reflect")
@@ -1651,9 +1991,11 @@ def render(
     bright_mask = bright_weight.astype(np.float32)[..., None]  # (H_pad, W_pad, 1)
     img_bright_padded = img_padded * bright_mask
     img_diffuse_padded = img_padded - img_bright_padded
+    # R-native-mem item 5: dead after the bright/diffuse split (~3 padded planes).
+    del lum_padded, bright_weight, bright_mask
 
     # R-perf-1 I3: hoist per-channel rfft2 of all 3 padded image buffers
-    # to once-per-render. The slab/legacy scatter loops then route every
+    # to once-per-render. The scatter loops then route every
     # `fftconvolve(img, kernel, mode="same")` call through the hoisted
     # spectra (kernel-only rfft2 + multiply + irfft2). At 2048² on the
     # canonical bench this is the headline perf win. Memory cost: 9 ×
@@ -1663,364 +2005,97 @@ def render(
         img_padded, img_diffuse_padded, img_bright_padded, scaled_ksize
     )
 
-    # Output accumulators
-    output = np.zeros_like(img_lin)
-    output_bright = np.zeros_like(img_lin)
-    weight_sum = np.zeros((H, W), dtype=np.float32)
-    # Fix-round: track is_delta branch weight separately so the diffuse
-    # energy gate can use the correct denominator. On is_delta slabs the
-    # diffuse accumulator receives full img_padded (bright path skipped
-    # per I4); on non-is-delta slabs it receives img_diffuse_padded only.
-    delta_weight_sum = np.zeros((H, W), dtype=np.float32)
+    # Layered gather is the SOLE rendering path (CLI-1a). R-native-mem item 5:
+    # the four accumulators (output, output_bright, weight_sum,
+    # delta_weight_sum) are allocated only by the helper that returns them;
+    # the old pre-dispatch zeros were dead (both branches rebind all four from
+    # the helper's tuple). weight_sum / delta_weight_sum track the is_delta
+    # branch weight so the diffuse energy gate has the right denominator.
+    if occlusion_compositing == "on":
+        # R-occlusion-layering ON branch — single dispatch to the parallel
+        # _layered_composite() helper. The OFF path (the slab loop below) stays
+        # byte-untouched, so G1 (canonical-bench md5) holds by code-path
+        # isolation. round-2 fix: _layered_composite REUSES the extracted
+        # _layered_gather_diffuse() for regime-a (literally the OFF code), so
+        # where the selector s≈0 the ON diffuse == OFF diffuse to float
+        # tolerance; only the regime-b premultiplied-OVER overlay is new. It
+        # returns the s-blended diffuse + the OFF-verbatim bright buffer; the
+        # caller recombines them at the unchanged bright-add below.
+        from summicron.render._layered_composite import _layered_composite
 
-    bin_width = 1.0 / n_bins
-
-    # --- P1.10.4 C5: layered gather is the SOLE rendering path. The
-    # `layered_gather` kwarg on render() survives as a silently-accepted
-    # noop (default True) for ABI; the False-path body was deleted. For
-    # legacy callers that pass `defocus_map` directly without a `depth_m`
-    # distance map (synthetic-fixture tests), silently fall back to the
-    # private `_legacy_scatter_basis` path AND emit a DeprecationWarning —
-    # this fallback is on the chopping block. Distance-indexed CLI
-    # invocations always supply both depth_m and
-    # tensor['object_distances_m'], so the layered path is taken for them.
-    _layered_active = (
-        depth_m is not None and tensor.get("object_distances_m") is not None
-    )
-    if not _layered_active:
-        warnings.warn(
-            "render(): layered_gather=True requested but depth_m or "
-            "object_distances_m is missing; falling back to legacy scatter "
-            "path. This fallback is deprecated and will be removed in a "
-            "future round.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-    if _layered_active:
-        # Depth-layered gather: iterate slabs near→far with fixed defocus_idx.
-        # Partition-of-unity slab weights on depth_m (requires depth_m not None).
         object_distances_m = tensor.get("object_distances_m")
         slab_w = compute_slab_weights(depth_m, object_distances_m)
-        D_gate = slab_w.shape[0]
-
-        # Porter-Duff over accumulator state.
-        acc_alpha = np.zeros((H, W), dtype=np.float32)
-
-        # R-perf-1 I1+I2: slab-batching driver + streaming holes-fill.
-        # The per-slab (D, H, W, 3) output buffers used to peak at ~D × H × W
-        # × 4 × 8 bytes (≈ 8.6 GB at 5712×4284 D=11). We now process slabs in
-        # serial batches of `batch_size`, freeing the per-batch working set
-        # at the boundary, and maintain a running argmin for holes-fill so
-        # the global per-slab output buffers vanish entirely.
-        if slab_batch_size is None:
-            batch_size = _SLAB_BATCH_SIZE
-        else:
-            batch_size = int(slab_batch_size)
-        if batch_size < 1:
-            raise ValueError(
-                f"slab_batch_size must be >= 1, got {batch_size!r}"
-            )
-
-        # Pre-compute holes-fill scaffolding that does NOT depend on per-slab
-        # buffers. `argmax_d` is computed from the full `slab_w` (allocated
-        # at :1511), so this is the SAME (H, W) tensor the global path used.
-        argmax_d_full = np.argmax(slab_w, axis=0).astype(np.int32)
-        HUGE = np.int32(D_gate * 10)
-
-        # Streaming holes-fill running buffers.
-        # `best_d_dist` carries the smallest |d - argmax_d| seen so far over a
-        # validity-masked scan; ties resolve to the FIRST (smallest-d) slab
-        # because we use strict `<` and iterate near→far — bit-exact tie-
-        # break parity with the global `argmin(dist_masked, axis=0)` path.
-        best_d_dist = np.full((H, W), HUGE, dtype=np.int32)
-        best_d_color_d = np.zeros((H, W, 3), dtype=np.float32)
-        best_d_color_b = np.zeros((H, W, 3), dtype=np.float32)
-
-        # Active slabs sorted near→far by object_distances_m (already ascending).
-        # R-perf-1 I1: `_MAX_ACTIVE_SLABS` repurposed as a HARD upper bound on
-        # `batch_size × n_batches`. Pre-existing semantics (warn-once on
-        # pathological active-slab count) preserved as the same cap value;
-        # the HARD bound now also rejects pathological batch_size × n_batches.
-        # P1.9.4 L10 shape-aware cap retained: `max(_MAX_ACTIVE_SLABS, D//2)`.
-        effective_cap = max(_MAX_ACTIVE_SLABS, D_gate // 2)
-        n_batches = (D_gate + batch_size - 1) // batch_size
-        # Hard upper bound: refuse pathological batching that would process
-        # the slab grid ≥ 4× over its physical D_gate size. The 4× anchor
-        # is the smallest factor that catches "the user typed 100 instead
-        # of 10" (1 batch of 100 round-up against D_gate=11) WITHOUT
-        # rejecting any reasonable batch_size ≤ D_gate (where
-        # `batch_size * n_batches ≤ D_gate + batch_size - 1 ≤ 2 * D_gate`).
-        # The `effective_cap * 4` term floors the bound at the historical
-        # `_MAX_ACTIVE_SLABS = 8` envelope so small-D scenes (D_gate < 8)
-        # still admit the default batch_size = 4 even when D_gate / 2 < 4.
-        if batch_size * n_batches > max(effective_cap * 4, D_gate * 4):
-            raise ValueError(
-                f"slab_batch_size * n_batches = {batch_size * n_batches} "
-                f"exceeds hard upper bound on (D_gate={D_gate}, "
-                f"effective_cap={effective_cap}); pick smaller "
-                f"--slab-batch-size."
-            )
-        active_count = 0
-        _warned_cap = False
-        # P1.audit Item 3: lazy-import CancelledError to keep this module
-        # free of the api.py edge (api.py imports convolve.py lazily).
-        from summicron.render.api import CancelledError
-
-        for batch_start in range(0, D_gate, batch_size):
-            batch_end = min(batch_start + batch_size, D_gate)
-            # Per-batch working set. Indexed by local-d position within the
-            # batch (0 .. batch_end - batch_start - 1). We allocate the small
-            # (≤ batch_size) per-slab outputs HERE and explicitly `del` +
-            # `gc.collect()` them at the batch boundary so the steady-state
-            # RAM footprint is bounded by `batch_size × H × W × 4 × 8` bytes
-            # instead of `D_gate × H × W × 4 × 8`.
-            batch_alpha: list[np.ndarray | None] = [None] * (batch_end - batch_start)
-            batch_out_d: list[np.ndarray | None] = [None] * (batch_end - batch_start)
-            batch_out_b: list[np.ndarray | None] = [None] * (batch_end - batch_start)
-
-            for d in range(batch_start, batch_end):
-                # P1.audit Item 3: cooperative cancel checkpoint at the
-                # outermost expensive loop.
-                if cancel is not None and cancel.is_set():
-                    raise CancelledError(
-                        f"render cancelled at slab {d}/{D_gate}"
-                    )
-                # Progress emit only when caller registered a sink. CLI path
-                # (on_progress is None) intentionally skips the per-slab
-                # message to keep stdout byte-identical to the pre-refactor
-                # CLI (the canonical bench md5 38c75dd2... is the gate).
-                if on_progress is not None:
-                    on_progress(f"  Slab {d + 1}/{D_gate}")
-                sw_d = slab_w[d]  # (H, W)
-                if float(sw_d.max()) < _EMPTY_SKIP_THRESH:
-                    continue  # empty-skip
-                active_count += 1
-                if active_count > effective_cap and not _warned_cap:
-                    warnings.warn(
-                        f"layered_gather: exceeded _MAX_ACTIVE_SLABS={effective_cap} "
-                        f"(D={D_gate}, active_count={active_count}); continuing — "
-                        f"possible pathological depth spread.",
-                        RuntimeWarning,
-                        stacklevel=2,
-                    )
-                    _warned_cap = True
-
-                # GATHER: at each output pixel x, the effective kernel is a
-                # slab_w-weighted mixture of per-D kernels. Implement by convolving
-                # the full (unweighted) image with kernel_d, then weight the result
-                # by slab_w[d] at each output pixel.
-                #
-                # Spec-ambiguity note: §7 prescribes Porter-Duff over-composite
-                # with `alpha_d = conv(slab_w[d], |PSF_d|_L1)`. With partition-of-
-                # unity slab_w and L1 kernels, Porter-Duff does NOT preserve
-                # partition-of-unity (acc_alpha converges to 1−Π(1−α_d), not Σα_d).
-                # Linear weighted-sum using slab_w at the output matches the
-                # spec's analytical proof (§3: per-slab inputs sum to I ⇒ per-slab
-                # outputs sum to conv(I, k_eff)) and preserves gather semantics.
-                # Near→far iteration preserved per batch so holes-fill occlusion
-                # ordering works. See locked-spec-R2-layered.md discussion at
-                # Coder round.
-                out_d = np.zeros((H, W, 3), dtype=np.float32)
-                out_b_d = np.zeros((H, W, 3), dtype=np.float32)
-                wsum_d = np.zeros((H, W), dtype=np.float32)
-                delta_wsum_d = np.zeros((H, W), dtype=np.float32)
-
-                # P1.10.4 C4x: --radial-blend-mode flag deleted. Basis is
-                # the sole radial-blend kernel. The `radial_blend_mode`
-                # kwarg on render() survives as a silently-accepted noop
-                # for ABI.
-                #
-                # R-perf-1 I4: parallelize scipy FFTs across all logical
-                # cores for this slab's scatter pass. POCKETFFT's pthreads
-                # backend chunks rfft2/irfft2 across rows. On M-series
-                # with 4 P + 8 E cores we measured ~1.10× wall-clock win
-                # on top of I3 alone with `set_workers(-1)`, AND no
-                # thermal-throttle drift over a sustained 2-min render
-                # (the canonical bench is < 100 s wall after I3). We
-                # therefore ship the unconditional `-1` wrap; no
-                # `--workers N` CLI plumbing per Researcher B's
-                # killer-risk #3 gate (would only matter if the
-                # incremental win < 1.30×, which it is, BUT the cost of
-                # plumbing exceeds the marginal robustness gain at the
-                # 100 s wall budget — flagged in spec-ambiguities for TL
-                # follow-up). Wrap the scatter call only — the io / load
-                # / finalize stages are not FFT-bound.
-                with sp_fft.set_workers(-1):
-                    _scatter_one_slab_fixed_d_basis(
-                        d_idx=d,
-                        img_diffuse_pad=img_diffuse_padded,
-                        img_bright_pad=img_bright_padded,
-                        img_full_pad=img_padded,
-                        kernels=kernels, defocus_ratios=defocus_ratios,
-                        radial_frac_map=radial_frac_map,
-                        r_centers=r_centers, wedge_idx=wedge_idx,
-                        kH=kH, kW=kW, pad=pad, pix_scale=pix_scale,
-                        scaled_ksize=scaled_ksize, psf_norm=psf_norm,
-                        H=H, W=W,
-                        output=out_d, output_bright=out_b_d,
-                        weight_sum=wsum_d, delta_weight_sum=delta_wsum_d,
-                        cancel=cancel,
-                        fft_state=fft_state,
-                    )
-
-                # Per-slab normalize by spatial-slab weight_sum (radial partition).
-                if psf_norm == "l1":
-                    wsum_d_safe = np.maximum(wsum_d, 1e-8)
-                    for c in range(3):
-                        out_d[:, :, c] /= wsum_d_safe
-                        out_b_d[:, :, c] /= wsum_d_safe
-
-                # Gather weight: slab_w[d] at the output.
-                alpha_d = sw_d.astype(np.float32)
-                mix = alpha_d[..., None]
-                output += out_d * mix
-                output_bright += out_b_d * mix
-                weight_sum += wsum_d
-                delta_weight_sum += delta_wsum_d
-                acc_alpha += alpha_d  # partition-of-unity => sums to 1 on covered pixels
-
-                # Cache per-slab outputs for the post-batch streaming-update.
-                # (We can't run the streaming-update inline because the original
-                # global-argmin path uses argmax_d_full computed from the
-                # ENTIRE slab_w — not the slab being processed. The argmax is
-                # already pre-computed; we only need to compare each slab's
-                # `|d - argmax_d_full|` against `best_d_dist`.)
-                local = d - batch_start
-                batch_alpha[local] = alpha_d
-                batch_out_d[local] = out_d
-                batch_out_b[local] = out_b_d
-
-            # I2 streaming-holes-fill: update running argmin from this batch.
-            # Iterate the batch in d-order (near→far) so ties resolve to the
-            # smallest-d slab — bit-exact match to `argmin(dist_masked, axis=0)`.
-            for local in range(batch_end - batch_start):
-                d_global = batch_start + local
-                alpha_d = batch_alpha[local]
-                if alpha_d is None:
-                    continue  # empty-skipped slab; never a valid donor.
-                # Validity: original path used `(slab_w > thresh) & (per_slab_alpha > 0)`.
-                # `per_slab_alpha[d] = sw_d.astype(np.float32)` exactly, so
-                # `per_slab_alpha[d] > 0 ⇔ sw_d > 0`. Combined with `slab_w >
-                # thresh` this reduces to `sw_d > thresh` (since thresh > 0).
-                sw_d = slab_w[d_global]
-                validity_d = sw_d > _EMPTY_SKIP_THRESH  # (H, W)
-                # Distance |d - argmax_d| in D-grid units.
-                dist_d_for_this = np.abs(
-                    np.int32(d_global) - argmax_d_full
-                ).astype(np.int32)
-                # Mask invalid donors out with HUGE.
-                dist_masked_d = np.where(validity_d, dist_d_for_this, HUGE)
-                # Streaming update: replace where strictly smaller.
-                # Strict `<` preserves the original `argmin`'s "first wins"
-                # tie-break since we sweep d in ascending order.
-                better = dist_masked_d < best_d_dist
-                if better.any():
-                    best_d_dist = np.where(better, dist_masked_d, best_d_dist)
-                    better_3 = better[..., None]
-                    best_d_color_d = np.where(
-                        better_3, batch_out_d[local], best_d_color_d
-                    )
-                    best_d_color_b = np.where(
-                        better_3, batch_out_b[local], best_d_color_b
-                    )
-
-            # Free per-batch working set explicitly. Lists hold (H, W, 3) and
-            # (H, W) arrays; `del` removes the Python-level refs and the
-            # `gc.collect()` pump returns the float32 buffers to the OS-side
-            # malloc pool before the next batch allocates fresh ones.
-            del batch_alpha, batch_out_d, batch_out_b
-            gc.collect()
-
-        print(
-            f"  layered_gather: active_slabs={active_count}/{D_gate}, "
-            f"acc_alpha mean={float(acc_alpha.mean()):.3f}, "
-            f"holes={int((acc_alpha < 0.02).sum())} pixels"
+        (
+            output, output_bright, weight_sum, delta_weight_sum, acc_alpha
+        ) = _layered_composite(
+            depth_m=depth_m,
+            slab_w=slab_w,
+            object_distances_m=object_distances_m,
+            defocus_map=dmap,
+            img_lin=img_lin,
+            img_padded=img_padded,
+            img_diffuse_padded=img_diffuse_padded,
+            img_bright_padded=img_bright_padded,
+            kernels=kernels,
+            defocus_ratios=defocus_ratios,
+            radial_frac_map=radial_frac_map,
+            r_centers=r_centers,
+            wedge_idx=wedge_idx,
+            kH=kH, kW=kW, pad=pad, pix_scale=pix_scale,
+            scaled_ksize=scaled_ksize, psf_norm=psf_norm,
+            H=H, W=W,
+            fft_state=fft_state,
+            slab_batch_size=slab_batch_size,
+            cancel=cancel,
+            on_progress=on_progress,
         )
-
-        # Holes-fill (I6): depth-aware D-index scan, now driven by the running
-        # argmin maintained per-batch (I2). The streaming buffers have already
-        # captured the closest-valid-D color per pixel; the only work left is
-        # to apply the gather where `acc_alpha < 0.02`.
-        holes = acc_alpha < 0.02
-        if holes.any():
-            has_valid = best_d_dist < HUGE  # (H, W)
-
-            # Build an output_diffuse (bright-masked-out) fallback for all-empty.
-            # For simplicity use img_lin as the fallback color (it's the safest
-            # finite value; matches spec's "no raise" requirement).
-            fallback = img_lin
-
-            # Apply fill — pixels with a valid donor get the running buffers.
-            valid_and_holes = (holes & has_valid)[..., None]
-            output = np.where(valid_and_holes, best_d_color_d, output)
-            output_bright = np.where(valid_and_holes, best_d_color_b, output_bright)
-            # Pixels with no valid donor fall back to input (diffuse equivalent).
-            noone_and_holes = (holes & ~has_valid)[..., None]
-            output = np.where(noone_and_holes, fallback, output)
-            output_bright = np.where(noone_and_holes, 0.0, output_bright)
-            # Normalize acc_alpha so downstream post-processing sees "filled".
-            acc_alpha = np.where(holes & has_valid, np.float32(1.0), acc_alpha)
-            acc_alpha = np.where(holes & ~has_valid, np.float32(1.0), acc_alpha)
-
-        # Stash session-level state for tests to introspect holes closure.
-        globals()["_LAST_LAYERED_ACC_ALPHA"] = acc_alpha
-        # P1.10.5 C2: `_LAST_LAYERED_BRIGHT_MASK` globals() stash deleted —
-        # zero consumers per FF-B5 grep across summicron/ + tests/. See
-        # locked-spec-P1_10_5.md § 3 C2.
-
+        if stats is not None:
+            stats["acc_alpha"] = acc_alpha
+        _emit(
+            on_progress,
+            f"  occlusion-compositing: ON (premultiplied-alpha layered OVER), "
+            f"D={slab_w.shape[0]}",
+        )
     else:
-        # P1.10.4 C5: silent fallback path (layered gather unavailable
-        # because depth_m or object_distances_m is missing). Routes to the
-        # private `_legacy_scatter_basis` helper with a DeprecationWarning
-        # already emitted upstream. This branch is on the chopping block.
-        # P1.10.5 C2: `_LAST_LAYERED_BRIGHT_MASK` globals() stash deleted —
-        # zero consumers per FF-B5 grep across summicron/ + tests/.
-
-        # P1.10.4 C4b: --radial-blend-mode flag deleted. Basis is the
-        # sole radial-blend kernel. The `radial_blend_mode` kwarg on
-        # render() survives as a silently-accepted noop for ABI.
-        # R-perf-1 I4: same scope guarantee as the layered branch above.
-        with sp_fft.set_workers(-1):
-            _legacy_scatter_basis(
-                img_padded=img_padded,
-                img_diffuse_padded=img_diffuse_padded,
-                img_bright_padded=img_bright_padded,
-                kernels=kernels, defocus_ratios=defocus_ratios,
-                radial_frac_map=radial_frac_map,
-                r_centers=r_centers,
-                wedge_idx=wedge_idx,
-                dmap=dmap, n_bins=n_bins, bin_width=bin_width,
-                kH=kH, kW=kW, pad=pad, pix_scale=pix_scale,
-                scaled_ksize=scaled_ksize, psf_norm=psf_norm,
-                H=H, W=W,
-                output=output, output_bright=output_bright,
-                weight_sum=weight_sum, delta_weight_sum=delta_weight_sum,
-                fft_state=fft_state,
-            )
-
-    # Normalize by weight sum (avoid division by zero).
-    # P1.7: stamp-mode (psf_norm="peak") skips this renorm — the whole point
-    # of peak-norm stamps is that bright pixels bloom by sum(kernel) instead
-    # of being averaged back to ~input magnitude. Overflow clips to [0,1] at
-    # finalize.
-    # P1.12 R2: layered_gather already normalized per-slab before Porter-Duff
-    # compositing; skip the legacy post-loop renorm in that case.
-    if psf_norm == "l1" and not _layered_active:
-        weight_sum = np.maximum(weight_sum, 1e-8)
-        for c in range(3):
-            output[:, :, c] /= weight_sum
-            output_bright[:, :, c] /= weight_sum
+        # Depth-layered gather (the LIVE OFF diffuse path). R-occlusion-layering
+        # round-2: the entire P1.12 layered_gather assembly (slab-batching +
+        # streaming holes-fill + per-batch GC) now lives in the extracted
+        # _layered_gather_diffuse() helper so _layered_composite regime-a can
+        # call the SAME code (probe-round-1 fix; see the helper docstring).
+        # PURE EXTRACTION (pre-Q-b pin md5 38c75dd2... was the old pin; current is G1_MD5 in _bench.py).
+        object_distances_m = tensor.get("object_distances_m")
+        slab_w = compute_slab_weights(depth_m, object_distances_m)
+        (
+            output, output_bright, weight_sum, delta_weight_sum, acc_alpha
+        ) = _layered_gather_diffuse(
+            depth_m=depth_m, slab_w=slab_w, img_lin=img_lin,
+            img_padded=img_padded, img_diffuse_padded=img_diffuse_padded,
+            img_bright_padded=img_bright_padded,
+            kernels=kernels, defocus_ratios=defocus_ratios,
+            radial_frac_map=radial_frac_map, r_centers=r_centers,
+            wedge_idx=wedge_idx,
+            kH=kH, kW=kW, pad=pad, pix_scale=pix_scale,
+            scaled_ksize=scaled_ksize, psf_norm=psf_norm, H=H, W=W,
+            fft_state=fft_state, slab_batch_size=slab_batch_size,
+            on_progress=on_progress, cancel=cancel,
+            emit_log=True,
+        )
+        if stats is not None:
+            stats["acc_alpha"] = acc_alpha
 
     # P1.11 R1 (I7): bright-pass logging before α-blend.
     _bpp = 100.0 * float((img_bright_padded > 0.0).any(axis=-1).mean())
+    if stats is not None:
+        stats["bright_pixels_pct"] = _bpp
     _inp = float(img_lin.sum())
     _ber = float(output_bright.sum()) / _inp if _inp > 1e-6 else 0.0
-    print(
+    _emit(
+        on_progress,
         f"  bright-pass: thresh={bright_thresh:g}, "
         f"region_size={int(bright_pass_region_size)}, "
         f"floor={float(bright_pass_floor):.3f}, "
         f"norm_pct={float(bright_pass_norm_pct):.2f}, "
-        f"bright_pixels_pct={_bpp:.3f}%, bright_energy_ratio={_ber:.4f}"
+        f"bright_pixels_pct={_bpp:.3f}%, bright_energy_ratio={_ber:.4f}",
     )
 
     # Combine diffuse + bright before gate checks.
@@ -2035,12 +2110,11 @@ def render(
     if input_sum < 1e-6:
         # Trivially conserved: zero in, ~zero out
         pass
-    elif _layered_active:
+    else:
         # P1.12 R2: layered gather uses per-slab weighted sum composite. Use
-        # the linear input (img_lin) as the correct denominator for energy
-        # conservation — legacy gate incorrectly compares sRGB input.sum to
-        # linear output.sum (gamma factor ~0.43 at mid-gray). L1 kernels +
-        # partition-of-unity slab_w preserve Σ energy under the composite.
+        # the linear input (img_lin) as the denominator for energy
+        # conservation. L1 kernels + partition-of-unity slab_w preserve
+        # Σ energy under the composite.
         lin_sum = float(img_lin.sum())
         energy_ratio = float(output.sum()) / max(lin_sum, 1e-6)
         if psf_norm == "l1":
@@ -2051,66 +2125,6 @@ def render(
                     f"(linear/linear)"
                 )
         else:
-            if not (energy_ratio <= 500.0):
-                raise RuntimeError(
-                    f"Gate FAIL: stamp bloom runaway, energy ratio "
-                    f"{energy_ratio:.4f} > 500.0"
-                )
-    else:
-        # P1.11 R1 (I5): split gate. Diffuse ∈ [0.85, 1.15] (skip when the
-        # diffuse input is ~empty, i.e. bright_thresh near 0); total ∈ [0.85, 100].
-        # Fix-round: the diffuse accumulator receives (a) the FULL image on
-        # is_delta slabs (I4 routes bright through the delta path too,
-        # "bright + diffuse = original") and (b) only img_diffuse on
-        # non-is-delta slabs. So the denominator is the weight-blended
-        # effective input, not img_lin.sum() (original bug: trips gate on
-        # bright content) nor img_diffuse.sum() alone (trips G6 where all
-        # slabs are deltas). Uses UNPADDED sums (numerator is cropped H×W).
-        diffuse_in_sum = float(img_diffuse_padded.sum())
-        # P1.11 R1 fix-round 2: match the luminance-gate split used for the
-        # actual bright/diffuse accumulators. Per-channel clip (old formula)
-        # mismatches the new split on warm HDR content → diffuse_ratio
-        # denominator is wrong, falsely trips the gate on real images.
-        # P1.11 R1-PATCH: match the soft-knee bright mask used by the inner
-        # loop (hard `<=` here would mismatch the primary split and trip the
-        # diffuse-ratio gate on near-threshold content).
-        lum_unpadded = (
-            0.2126 * img_lin[..., 0]
-            + 0.7152 * img_lin[..., 1]
-            + 0.0722 * img_lin[..., 2]
-        )
-        # P1.10: same region-aware function on the unpadded site (no two-site drift).
-        _bw_u = _compute_region_aware_bright_weight(
-            lum_unpadded, bright_thresh,
-            bright_pass_region_size, bright_pass_floor, bright_pass_norm_pct,
-        )
-        diffuse_mask_unpadded = (1.0 - _bw_u).astype(np.float32)[..., None]
-        img_diffuse_unpadded = img_lin * diffuse_mask_unpadded
-        total_weight_sum = float(weight_sum.sum()) + 1e-12
-        delta_frac = float(delta_weight_sum.sum()) / total_weight_sum
-        effective_diffuse_in = (
-            delta_frac * float(img_lin.sum())
-            + (1.0 - delta_frac) * float(img_diffuse_unpadded.sum())
-        )
-        diffuse_ratio = float((output - output_bright).sum()) / max(effective_diffuse_in, 1e-6)
-        energy_ratio = float(output.sum()) / input_sum
-        if psf_norm == "l1":
-            if diffuse_in_sum > 1e-6 * float(img_padded.sum() + 1e-12):
-                if not (0.85 <= diffuse_ratio <= 1.15):
-                    raise RuntimeError(
-                        f"Gate FAIL: diffuse energy ratio "
-                        f"{diffuse_ratio:.4f} outside [0.85, 1.15]"
-                    )
-            if not (0.85 <= energy_ratio <= 100.0):
-                raise RuntimeError(
-                    f"Gate FAIL: total energy ratio "
-                    f"{energy_ratio:.4f} outside [0.85, 100.0]"
-                )
-        else:  # psf_norm == "peak"
-            # P1.7 stamp-mode: no lower bound (dim scenes legitimately lose
-            # energy); upper bound is a bloom-runaway sanity ceiling. Matches
-            # spec §3's own 10-500 estimate for wide-kernel peak-sum; purpose
-            # is to catch runaway infinity / bad tensor loads, not police bloom.
             if not (energy_ratio <= 500.0):
                 raise RuntimeError(
                     f"Gate FAIL: stamp bloom runaway, energy ratio "
@@ -2132,7 +2146,7 @@ def render(
             if ssim < 0.80:
                 warnings.warn(f"Center SSIM {ssim:.3f} < 0.80")
             else:
-                print(f"  Center SSIM: {ssim:.3f} (PASS)")
+                _emit(on_progress, f"  Center SSIM: {ssim:.3f} (PASS)")
         except ImportError:
             warnings.warn("skimage not available; skipping center SSIM check")
 
@@ -2149,30 +2163,23 @@ def render(
         if omax > 1.0:
             output = output / omax
 
-    if _layered_active:
-        # P1.12 R2 / TL REVISION 1: α-blend as post-layered IDENTITY SNAP.
-        # The α-blend was NOT truly subsumed by layered gather — it's
-        # load-bearing for in-focus sharpness (G12 G_FACE_FALLOFF). At
-        # dmap≈0 (face pixels), smoothstep POU spreads weight across ~4
-        # non-identity bins, producing ~5× face softening vs legacy. This
-        # snap restores sharpness at the focal plane while preserving the
-        # layered composite everywhere else. Net mathematical effect:
-        # in-focus (α=1) → pure img_lin (Portrait-Mode-differentiating
-        # sharpness); out-of-focus (α=0) → pure layered composite
-        # (organic bokeh). `output` at this point already = diffuse +
-        # bright (line ~1002), so snap applies to their sum, which is
-        # equivalent to snapping diffuse and zeroing bright at in-focus.
-        alpha = (np.cos(0.5 * np.pi * np.minimum(dmap / D_KNEE_LAYERED, 1.0)) ** 2).astype(np.float32)
-        output = alpha[:, :, None] * img_lin + (1.0 - alpha[:, :, None]) * output
-        if np.any(np.isnan(output)):
-            raise RuntimeError("Gate FAIL: NaN in layered output")
-        print(f"  α-blend: D_KNEE_LAYERED={D_KNEE_LAYERED}, alpha_mean={float(alpha.mean()):.3f} (layered identity snap)")
-    else:
-        alpha = (np.cos(0.5 * np.pi * np.minimum(dmap / D_KNEE, 1.0)) ** 2).astype(np.float32)
-        output = alpha[:, :, None] * img_lin + (1.0 - alpha[:, :, None]) * output
-        if np.any(np.isnan(output)):
-            raise RuntimeError("Gate FAIL: NaN in post-blend output")
-        print(f"  α-blend: D_KNEE={D_KNEE}, alpha_mean={float(alpha.mean()):.3f}")
+    # P1.12 R2 / TL REVISION 1: α-blend as post-layered IDENTITY SNAP.
+    # Load-bearing for in-focus sharpness (G12 G_FACE_FALLOFF): at dmap≈0
+    # the smoothstep POU spreads weight across ~4 non-identity bins; this
+    # snap restores sharpness at the focal plane while preserving the
+    # layered composite elsewhere. `output` here = diffuse + bright.
+    alpha = (np.cos(0.5 * np.pi * np.minimum(dmap / D_KNEE_LAYERED, 1.0)) ** 2).astype(np.float32)
+    output = alpha[:, :, None] * img_lin + (1.0 - alpha[:, :, None]) * output
+    if np.any(np.isnan(output)):
+        raise RuntimeError("Gate FAIL: NaN in layered output")
+    if stats is not None:
+        stats["alpha_mean"] = float(alpha.mean())
+        # Q-a: references only (no copy, no arithmetic) for the paired
+        # quality gates; popped by _run_render_pipeline.
+        stats["alpha"] = alpha
+        stats["dmap"] = dmap
+        stats["img_lin"] = img_lin
+    _emit(on_progress, f"  α-blend: D_KNEE_LAYERED={D_KNEE_LAYERED}, alpha_mean={float(alpha.mean()):.3f} (layered identity snap)")
 
     output_linear = output.copy()
 
@@ -2195,8 +2202,8 @@ def render(
 
 def save_results(output_u8: np.ndarray, input_stem: str, out_dir: Path,
                   depth_scale: float = 1.0,
-                  downres: int | None = None) -> None:
-    """Save rendered image as JPEG (q95) and PNG."""
+                  downres: int | None = None) -> Path:
+    """Save rendered image as JPEG (q95) and PNG; returns the JPEG path."""
     from PIL import Image
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -2211,6 +2218,7 @@ def save_results(output_u8: np.ndarray, input_stem: str, out_dir: Path,
     img.save(str(png_path), "PNG")
     print(f"  Saved: {jpg_path}")
     print(f"  Saved: {png_path}")
+    return jpg_path
 
 
 # ---------------------------------------------------------------------------
@@ -2222,243 +2230,36 @@ def build_parser() -> argparse.ArgumentParser:
     """Construct the convolve.py CLI parser.
 
     Lifted out of ``main()`` in P1.audit Item 3 so the GUI / tests can
-    introspect flags without exec-side effects.
+    introspect flags without exec-side effects. CLI-1a C3: every flag is
+    installed by the stdlib-only ``_render_args.add_render_arguments``,
+    shared with the ``isummicron render`` subparser.
     """
+    from summicron.render._render_args import add_render_arguments
+
     parser = argparse.ArgumentParser(
         description="Bin-and-convolve renderer: apply 4D PSF tensor to an image"
     )
-    parser.add_argument("--image", required=True, help="Input image path (HEIC/JPEG/PNG)")
-    parser.add_argument(
-        "--tensor",
-        default=None,
-        help="4D tensor .npz path. When omitted, defaults to the wheel-shipped "
-             "canonical tensor (summicron.render._artifacts.default_tensor_path()).",
-    )
-    parser.add_argument(
-        "--out-dir",
-        default=str(Path(__file__).resolve().parents[2] / "runs" / "render"),
-        help="Output directory",
-    )
-    parser.add_argument(
-        "--output",
-        default=None,
-        help="Explicit output JPG path. Overrides --out-dir/auto-naming when set.",
-    )
-    parser.add_argument(
-        "--depth-scale",
-        type=float,
-        default=1.0,
-        help="Multiplier for depth_m array before render (default 1.0; only applies with --depth-source=lidar)",
-    )
-    parser.add_argument(
-        "--depth-source",
-        choices=["lidar", "monocular"],
-        default="lidar",
-        help="Depth backend; 'lidar' decodes HEIC depth_images[0], "
-             "'monocular' runs Depth Anything V2 (downloads ~100 MB DA2 "
-             "model on first invocation; requires the [depth] extra).",
-    )
-    parser.add_argument(
-        "--focus-xy",
-        nargs=2,
-        type=float,
-        default=None,
-        metavar=("X", "Y"),
-        help="Normalized image coords [0,1] (axis: x=col, y=row) for tap-to-focus. "
-             "Omit to use closest-subject (p2 of depth_m).",
-    )
-    parser.add_argument(
-        "--focus-target-m",
-        type=float,
-        default=None,
-        help="Tensor focus distance in meters (default: from tensor's focus_distance_m, else 0.7).",
-    )
-    parser.add_argument(
-        "--dof-m",
-        type=float,
-        default=0.0,
-        help="DoF band half-width in meters (Item C). 0 = off.",
-    )
-    parser.add_argument(
-        "--downres",
-        type=int,
-        default=None,
-        help="Downsample so the long edge equals this value (e.g. 2048). "
-             "Never upscales. Affects output filename suffix (_r<value>). "
-             "P1.10.4: replaces former `--working-long-edge` (collapsed; behavior "
-             "preserved via downres_array's HDR-aware scipy bilinear path).",
-    )
-    parser.add_argument(
-        "--psf-norm",
-        choices=["l1", "peak"],
-        default="l1",
-        help="PSF normalization mode. 'l1' (default) keeps kernels L1-normed "
-             "and averages via post-conv weight-sum divide (bit-identical to "
-             "pre-P1.7 render path). 'peak' peak-normalizes kernels (stamp "
-             "mode): bright pixels bloom by sum(kernel) and overflow clips at "
-             "finalize. See doc/plan/phase1/section7/locked-spec-stamp-mode.md.",
-    )
-    # P1.10.4 C5: --layered-gather / --no-layered-gather flag removed.
-    # Layered gather is the SOLE rendering path. The render() kwarg
-    # survives as a silently-accepted noop (default True) for ABI.
-    parser.add_argument(
-        "--bright-pass-thresh",
-        type=float,
-        default=1.0,
-        help="Dual-norm bright-pass threshold in linear luminance (P1.11 R1). "
-             "Pixels above T convolve with a peak-renormed kernel (bloom "
-             "gain); pixels below T use the existing L1 path. Default 1.0 "
-             "targets HDR highlights. Pass 1e9 to disable (backward-compat "
-             "— bit-identical to pre-R1). See "
-             "doc/plan/phase1/section11/locked-spec-R1-brightpass.md.",
-    )
-    parser.add_argument(
-        "--bright-pass-region-size",
-        type=int,
-        default=31,
-        help="P1.10: morphological top-hat structuring-element size for "
-             "region-aware bright-pass. Default 31 since P1.10.2 (was 0 "
-             "pre-P1.10.2; pass 0 to disable, bit-identical to P1.11 "
-             "R1-PATCH). Recommended: 15 (small lights only — string"
-             "lights, candle), 31 (canonical), 63 (large lights). Detector "
-             "fires on pixels with high local-contrast (true highlights); "
-             "flat-bright midtones (face, white shirt) get suppressed.",
-    )
-    parser.add_argument(
-        "--bright-pass-floor",
-        type=float,
-        default=0.10,
-        help="P1.10: floor multiplier on the region-detector signal. 0.0 = "
-             "strict (only true local-contrast highlights bloom). 1.0 = no "
-             "region gate. Default 0.10 preserves a small bloom for "
-             "large-uniform-bright safety net (LED panel, sun-disc filling "
-             "frame). Only consulted when --bright-pass-region-size > 0.",
-    )
-    parser.add_argument(
-        "--bright-pass-norm-pct",
-        type=float,
-        default=99.0,
-        help="P1.10: percentile of detector values used as scene-scale "
-             "anchor. Default 99.0 (top 1%% of pixels define bloom ceiling). "
-             "Range [50.0, 100.0]. Only consulted when --bright-pass-region-size > 0.",
-    )
-    # P1.10.4 C4b: --radial-blend-mode flag deleted. Basis is the sole
-    # radial-blend kernel; the `radial_blend_mode` kwarg survives on
-    # render() as a silently-accepted noop (default "basis") to preserve
-    # call-site ABI for tests not enumerated in spec § 6. See
-    # doc/plan/phase1/section18/locked-spec-P1_10_4.md § 9 C4b.
-    parser.add_argument(
-        "--hdr-source",
-        choices=["none", "macos"],
-        default="none",
-        help="HDR input path. 'none' (default) = LDR sRGB via pillow/HEIF "
-             "(bit-identical to pre-P1.8 render). 'macos' = extended-linear "
-             "float32 via Core Image expandToHDR, then Apple's Core Image "
-             "CIToneMapHeadroom HDR→SDR step after render() (P1.10.2 retired "
-             "the prior Reinhard-tonemap stage). Requires macOS + the "
-             "[hdr-macos] extra. See doc/plan/phase1/section8/"
-             "locked-spec-hdr-access.md.",
-    )
-    # ---- P1.13 K11 LDR-anchored per-channel shadow match (locked-spec § 2)
-    parser.add_argument(
-        "--shadow-match-mode",
-        choices=["off", "on"],
-        default="off",
-        help="P1.13 K11 LDR-anchored per-channel shadow match. PRE-tonemap "
-             "only (the post-tonemap variant from K10 was rejected -- killed "
-             "dynamic range). When 'on': preview-tonemap to derive per-channel "
-             "shadow ratios in display-linear space, then apply on linear-HDR "
-             "buffer pre-final-tonemap (full headroom). 'off' (default) = "
-             "bit-identical pre-K11. Requires --hdr-source != none.",
-    )
-    parser.add_argument(
-        "--shadow-band-hi",
-        type=float,
-        default=0.70,
-        help="P1.13 K11 LDR-luma cutoff defining 'shadow' band for "
-             "--shadow-match-mode. Default 0.70 (covers shadow + mid; "
-             "G11-confirmed on Demo_input as the right coverage to fix "
-             "render's mid-band warm cast). 0.30 = shadow only (corrects "
-             "shadow blue cast but leaves mid uncorrected). Range "
-             "[0.0, 1.0]. Inert when --shadow-match-mode=off.",
-    )
-    parser.add_argument(
-        "--shadow-match-max-gain",
-        type=float,
-        default=4.0,
-        help="P1.13 K11 upper clamp on per-channel gain. Prevents pathological "
-             "over-lift on degenerate scenes. Default 4.0. Range [1.0, 16.0]. "
-             "Inert when --shadow-match-mode=off.",
-    )
-    parser.add_argument(
-        "--shadow-match-strength",
-        type=float,
-        default=1.0,
-        help="P1.13 K11 strength multiplier on auto-derived per-channel "
-             "shadow gain. Default 1.0 (exact LDR match; 1.2 was tried and "
-             "deemed too aggressive on G11 review). >1.0 overshoots; <1.0 "
-             "undershoots. Multiplied BEFORE clamp. Range [0.0, 4.0]. "
-             "Inert when --shadow-match-mode=off.",
-    )
-    parser.add_argument(
-        "--slab-batch-size",
-        type=int,
-        default=None,
-        help="R-perf-1 I1: depth-layered gather slab-batching size. The "
-             "render() slab loop processes D depth slabs in serial batches "
-             "of this size, freeing the per-batch working set at each batch "
-             "boundary. Default (None → 4) tuned for 18 GB Macs at 2048² "
-             "downres; smaller values reduce peak RSS at a small wall-clock "
-             "cost; larger values trade RAM for fewer GC pumps. Bit-exact "
-             "to the pre-batching path (uint8 max-abs-diff ≤ 1; verified by "
-             "256² synthetic equivalence proof under tests/unit).",
-    )
+    add_render_arguments(parser)
     return parser
 
 
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     """Argparse-time validation lifted from the original ``main()`` body.
 
-    Calls ``parser.error()`` (exit 2) on any out-of-range flag so the CLI
-    surface stays unchanged. The GUI/in-process callers should construct
-    ``RenderOptions`` directly and skip this — the validators downstream
-    in :func:`render` raise ``ValueError`` on the same invariants.
+    Calls ``parser.error()`` (exit 2) on any invalid flag so the CLI
+    surface stays unchanged. The invariants themselves live in
+    ``RenderOptions.__post_init__`` (and ``api._check_platform`` for the
+    macOS preflight); this function only converts their ``ValueError`` into
+    an argparse error. GUI/in-process callers construct ``RenderOptions``
+    directly and get the same ``ValueError``.
     """
-    if args.focus_xy is not None:
-        x, y = args.focus_xy
-        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
-            parser.error("--focus-xy values must be in [0, 1]")
-    if args.focus_target_m is not None and args.focus_target_m <= 0:
-        parser.error("--focus-target-m must be > 0")
-    if args.dof_m < 0:
-        parser.error("--dof-m must be >= 0")
-    # P1.13 K11 range gates
-    if not (0.0 <= args.shadow_band_hi <= 1.0):
-        parser.error("--shadow-band-hi must be in [0.0, 1.0]")
-    if not (1.0 <= args.shadow_match_max_gain <= 16.0):
-        parser.error("--shadow-match-max-gain must be in [1.0, 16.0]")
-    if not (0.0 <= args.shadow_match_strength <= 4.0):
-        parser.error("--shadow-match-strength must be in [0.0, 4.0]")
-    # R-perf-1 I1: --slab-batch-size must be a positive integer when set.
-    if getattr(args, "slab_batch_size", None) is not None:
-        if int(args.slab_batch_size) < 1:
-            parser.error("--slab-batch-size must be >= 1")
-    # P1.audit Item 8: macOS-HDR preflight. Surface platform mismatch BEFORE
-    # the deferred Quartz/CoreImage import fires inside the renderer; placed
-    # ahead of the shadow-match-mode validator so platform issue surfaces
-    # first if both apply.
-    if args.hdr_source == "macos" and sys.platform != "darwin":
-        parser.error(
-            f"--hdr-source macos requires macOS; got {sys.platform}. "
-            f"Use --hdr-source none on this platform."
-        )
-    # F3: early-error guard (was at L1953 post-render — wasted minutes
-    # of compute before erroring).
-    if args.shadow_match_mode == "on" and args.hdr_source == "none":
-        parser.error(
-            "--shadow-match-mode on requires --hdr-source != none "
-            "(needs HDR linear buffer + CI preview pass)."
-        )
+    from summicron.render.api import RenderOptions, _check_platform
+
+    try:
+        _check_platform(getattr(args, "hdr_source", "none"))
+        RenderOptions.from_argparse(args)
+    except ValueError as e:
+        parser.error(str(e))
 
 
 def _run_render_pipeline(
@@ -2466,13 +2267,14 @@ def _run_render_pipeline(
     *,
     on_progress: _OnProgress = None,
     cancel: threading.Event | None = None,
+    _eval_sink: dict | None = None,
 ):
     """Execute the v0 render pipeline against a :class:`RenderOptions`.
 
     P1.audit Item 3: lifted from the original ``main()`` body as a pure
     refactor. ``on_progress=None`` (CLI default) routes status emits
     through ``print()`` so stdout is byte-identical to the pre-refactor
-    path; the canonical bench md5 ``38c75dd2…`` is the gate. Returns a
+    path; the current bench pin is G1_MD5 (_bench.py; ``38c75dd2…`` was the pre-Q-b pin, no longer reproducible). Returns a
     provisional :class:`~summicron.render.api.RenderResult` whose
     ``elapsed_s`` is 0.0 — the public :func:`render_image` wrapper in
     ``api.py`` overwrites that with the real wall time.
@@ -2490,7 +2292,7 @@ def _run_render_pipeline(
         from summicron.render._artifacts import default_tensor_path
         tensor_path = default_tensor_path()
     out_dir = Path(opts.out_dir) if opts.out_dir is not None else (
-        Path(__file__).resolve().parents[2] / "runs" / "render"
+        Path.cwd() / "runs" / "render"
     )
     depth_scale = float(opts.depth_scale)
     warnings_collected: list[str] = []
@@ -2583,6 +2385,7 @@ def _run_render_pipeline(
         f"Rendering (depth_scale={depth_scale}, psf_norm={opts.psf_norm}, "
         f"hdr_source={opts.hdr_source})...",
     )
+    render_stats: dict = {}
     render_out, output_linear = render(
         image_srgb,
         tensor,
@@ -2593,10 +2396,41 @@ def _run_render_pipeline(
         bright_pass_region_size=opts.bright_pass_region_size,
         bright_pass_floor=opts.bright_pass_floor,
         bright_pass_norm_pct=opts.bright_pass_norm_pct,
+        occlusion_compositing=getattr(opts, "occlusion_compositing", "off"),
         slab_batch_size=getattr(opts, "slab_batch_size", None),
         on_progress=on_progress,
         cancel=cancel,
+        stats=render_stats,
     )
+
+    # Q-a: focus-fidelity metrics on the pre-shadow-match linear output.
+    # private: Q-a probe/slow-test hook (_eval_sink)
+    _q_alpha = render_stats.pop("alpha", None)
+    _q_dmap = render_stats.pop("dmap", None)
+    _q_ref = render_stats.pop("img_lin", None)
+    focus_fidelity = None
+    if focus_xy is not None and _q_alpha is not None and _q_ref is not None:
+        try:
+            from summicron.render import _quality
+            focus_fidelity = _quality.focus_fidelity(
+                output_linear, _q_ref, _q_alpha, focus_xy
+            )
+        except Exception as exc:  # diagnostics must never fail a render
+            warnings.warn(
+                f"Q1 focus-fidelity computation failed ({exc!r}); "
+                "focus_fidelity=None",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            focus_fidelity = None
+    if _eval_sink is not None:
+        _eval_sink["alpha"] = _q_alpha
+        _eval_sink["dmap"] = _q_dmap
+        _eval_sink["ref_lin"] = _q_ref
+        _eval_sink["defocus_ratios"] = np.asarray(
+            tensor["defocus_ratios"], dtype=np.float64
+        )
+    del _q_alpha, _q_dmap, _q_ref
 
     shadow_gains_rgb = None
     if opts.shadow_match_mode == "off":
@@ -2641,7 +2475,9 @@ def _run_render_pipeline(
         )
 
     output_path: Path | None = None
-    if opts.out_path is not None:
+    if not getattr(opts, "save", True):
+        pass  # API-only: skip every disk write
+    elif opts.out_path is not None:
         out_path = Path(opts.out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         from PIL import Image as _PILImage
@@ -2654,7 +2490,7 @@ def _run_render_pipeline(
         _emit(on_progress, f"  Saved: {out_path}")
         output_path = out_path
     else:
-        save_results(
+        output_path = save_results(
             output_u8, image_path.stem, out_dir,
             depth_scale=depth_scale, downres=opts.downres,
         )
@@ -2669,9 +2505,12 @@ def _run_render_pipeline(
     #   linear buffer only when the caller asked for it.
     out_lin = output_linear if (mode == "hdr" or opts.return_linear) else None
     diagnostics = RenderDiagnostics(
-        center_ssim=None,
-        bright_pixels_pct=0.0,
-        alpha_mean=0.0,
+        center_ssim=(
+            focus_fidelity["ssim_band"] if focus_fidelity is not None else None
+        ),
+        focus_fidelity=focus_fidelity,
+        bright_pixels_pct=float(render_stats.get("bright_pixels_pct", 0.0)),
+        alpha_mean=float(render_stats.get("alpha_mean", 0.0)),
         shadow_gains_rgb=shadow_gains_rgb,
         warnings=tuple(warnings_collected),
     )
@@ -2703,7 +2542,30 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     _validate_args(args, parser)
     opts = RenderOptions.from_argparse(args)
-    _run_render_pipeline(opts)
+    return run_cli_render(lambda: _run_render_pipeline(opts))
+
+
+def run_cli_render(run) -> int:
+    """Shared CLI error contract (``isummicron render`` and ``main``).
+
+    Validates ``ISUMMICRON_MAX_BYTES`` *before* ``run`` loads any image, then
+    maps expected failures to one ``render: <msg>`` stderr line + exit 2.
+    ``KeyboardInterrupt`` and other exceptions propagate, as do
+    ``NotImplementedError`` / ``RecursionError`` (programming errors), and
+    everything when ``ISUMMICRON_DEBUG`` is set to a non-empty value other
+    than ``0`` (full traceback).
+    """
+    try:
+        _budget_bytes()
+        run()
+    except (NotImplementedError, RecursionError):
+        raise
+    except (ValueError, RuntimeError, FileNotFoundError,
+            TensorValidationError) as e:
+        if os.environ.get("ISUMMICRON_DEBUG", "") not in ("", "0"):
+            raise
+        print(f"render: {e}", file=sys.stderr)
+        return 2
     return 0
 
 

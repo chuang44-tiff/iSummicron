@@ -1,3 +1,3 @@
-"""iSummicron — spatially-varying PSF bokeh renderer (simulated double-gauss 50mm f/2)."""
+"""iSummicron — spatially varying synthetic bokeh from CodeV-simulated PSFs (a generic ~100 mm f/2 double-Gauss proxy)."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
