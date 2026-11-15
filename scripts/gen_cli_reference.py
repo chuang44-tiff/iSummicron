@@ -51,6 +51,7 @@ DESCRIPTIONS = {
     "slab_batch_size": "Depth slabs per batch (default 1). Larger values only use more memory; output is identical.",
     "bright_stamp": "Experimental. Bright-pass stamp: `auto` is `l1`; `peak` is the peak-normalized kernel; `l1` is the L1-normalized kernel times `--bright-stamp-gain`.",
     "bright_stamp_gain": "Experimental. Gain of the `l1` bright stamp, a number in (0, 16] (default 2.0 under an `l1` stamp).",
+    "engine": "Render engine. `reference` (default): the exact full-frame path. `tiled`: opt-in CPU engine that convolves in overlapping tiles with the same lens kernels; several times faster, equal to the reference within 1e-5 relative in linear light on real scenes. `gpu`: opt-in MLX engine on Apple silicon (needs the `gpu` extra), same tiles and lens kernels as `tiled`, equal to the reference within 1e-4 relative in linear light (p99.9 within 1e-5). A fast engine that is not available is a strict error (exit 2), never a silent fallback. With `--occlusion-compositing on` the reference engine runs and a note is printed.",
     "occlusion_compositing": "`on`: layered compositing that stacks the depth layers front to back, for about 1.3–1.6× render time. Off by default: with real-lens blur it only changes a hairline along the subject's outline.",
 }
 
@@ -59,7 +60,7 @@ GROUPS = {
     "focus_xy": "Basic", "downres": "Basic", "hdr_source": "Basic", "occlusion_compositing": "Basic",
     "bright_pass_thresh": "Highlights", "bright_pass_region_size": "Highlights",
     "bright_pass_floor": "Highlights", "bright_pass_norm_pct": "Highlights",
-    "tensor": "Advanced", "focus_target_m": "Advanced", "slab_batch_size": "Advanced",
+    "engine": "Advanced", "tensor": "Advanced", "focus_target_m": "Advanced", "slab_batch_size": "Advanced",
     "depth_guided": "Depth and tone", "depth_mapping": "Depth and tone", "depth_gain": "Depth and tone", "tonemap": "Depth and tone",
     "bright_stamp": "Bright stamp (experimental)", "bright_stamp_gain": "Bright stamp (experimental)",
     "shadow_match_mode": "Shadow match (experimental)", "shadow_band_hi": "Shadow match (experimental)",
@@ -86,9 +87,15 @@ def _parser() -> argparse.ArgumentParser:
     return _render_args.add_render_arguments(p)
 
 
+# Flags that exist in the parser but are held back from the generated public
+# reference until the release documents them. Empty: --engine was documented in 0.5.2.
+_PENDING_RELEASE_DOCS: set[str] = set()
+
+
 def _actions():
     return [a for a in _parser()._actions
-            if a.option_strings and "--help" not in a.option_strings and not a.dest.startswith("_removed_")]
+            if a.option_strings and "--help" not in a.option_strings and not a.dest.startswith("_removed_")
+            and a.dest not in _PENDING_RELEASE_DOCS]
 
 
 def _coverage_errors(dests: set[str]) -> list[str]:

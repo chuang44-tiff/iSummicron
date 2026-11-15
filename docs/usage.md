@@ -16,7 +16,7 @@ With conda:
 
 ```bash
 git clone https://github.com/chuang44-tiff/iSummicron.git && cd iSummicron
-git checkout v0.5.1
+git checkout v0.5.2
 conda env create -f environment.yml && conda activate isummicron
 pip install -e '.[heic,depth,hdr-macos,eval-quality,dev]'
 ```
@@ -43,6 +43,7 @@ Core dependencies are numpy, scipy and pillow. Optional extras:
 - `depth`: torch and transformers, for the monocular Depth Anything V2 Small fallback.
 - `hdr-macos`: pyobjc Quartz (which re-exports Core Image), darwin only.
 - `eval-quality`: scikit-image.
+- `gpu`: mlx, for `--engine gpu`. Apple silicon only; on other machines the extra installs nothing.
 - `dev`: pytest, ruff and pyyaml.
 
 A missing extra fails with an actionable `ImportError`.
@@ -75,6 +76,7 @@ The README's sample command spells out three settings. On a Portrait HEIC on mac
 | `--hdr-source` | `auto` (default) or `macos`: keep highlight headroom (macOS only); `none` is the 8-bit load. |
 | `--bright-stamp`, `--bright-stamp-gain` | How highlights are painted. The default paints the lens shape at 2.0× the light's own energy; the gain takes a number in (0, 16]. |
 | `--out-dir`, `--output` | Output directory, or one exact output file. |
+| `--engine` | `reference` (default, exact), `tiled` (opt-in CPU, several times faster) or `gpu` (opt-in Apple GPU, needs the `gpu` extra). See [Render engines](#render-engines). |
 | `--occlusion-compositing` | `on` stacks the depth layers front to back (off by default; see [Occlusion compositing](#occlusion-compositing)). |
 | `--tensor` | Use your own PSF tensor; the format is under [Bring your own PSF tensor](#bring-your-own-psf-tensor). Not combinable with `--lens`. |
 
@@ -112,14 +114,44 @@ Without `--focus-xy`, the closest subject (the 2nd percentile of the depth map) 
 
 Depth errors show up as wrong blur. A LiDAR depth image measures the nearest surface, so a window pane in front of a distant scene reads as near.
 
+## Render engines
+
+`--engine` chooses how the blur is computed. The lens kernels, the depth layers and the highlight handling are the same in all three, so the blur shapes are the same.
+
+- `reference` (default) is the exact full-frame path. Its output is byte-identical to 0.5.1.
+- `tiled` convolves in overlapping tiles on the CPU and skips tiles where a depth layer has no pixels, and runs the highlight pass only on tiles with bright pixels. Same speed class as the GPU engine at 2048 and several times faster than `reference`.
+- `gpu` runs the tile convolutions on the Apple GPU with MLX. Install it by adding `gpu` to the extras of the release install command (`isummicron[heic,hdr-macos,gpu] @ <wheel URL>`, see the [README](../README.md#install)), or `pip install -e '.[gpu]'` from a source checkout. It needs Apple silicon; on other machines the extra installs nothing and `--engine gpu` stops with an error. mlx can be kept in its own virtual environment if you want the rest of your setup untouched.
+
+```bash
+isummicron render --image photo.HEIC --focus-xy 0.40 0.39 --engine tiled
+```
+
+```python
+RenderOptions(image_path=..., engine="tiled")   # "reference" (default), "tiled" or "gpu"
+```
+
+Precision. `reference` is the ground truth. `tiled` and `gpu` are checked against it in linear light, with `e = |difference| / max(reference, 1)` per pixel, on real photos and standard charts, over the whole frame and the ring near the frame edge:
+
+| | max `e` | p99.9 `e` | total energy | 8-bit output | PSNR |
+| --- | --- | --- | --- | --- | --- |
+| `tiled` | at most 1e-5 | at most 1e-6 | within 1e-5 | within 1 level | |
+| `gpu` | at most 1e-4 | at most 1e-5 | within 1e-5 | within 1 level | at least 70 dB |
+
+Measured worst cases on the test photos are well inside these limits (on the sample photo, `tiled` max `e` is 6.8e-7 and `gpu` 1.6e-6). The engines are checked by tolerance, not by checksum, so their files can differ from `reference` in the last bit of some pixels; the difference is not visible. On extreme inputs (a peak-normalised bright stamp on HDR, large saturated patches, lights 50 to 1000 times white, a `--bright-stamp-gain` of 8 or more) the rule is looser: the p99.9 error against a float64 calculation is at most 1.5 times (`tiled`) or 7 times (`gpu`) the reference's own float32 error. `gpu` output is deterministic on one machine for fixed settings, and its bytes can differ across GPU families.
+
+With `--occlusion-compositing on`, both fast engines run the reference engine instead and print `note: engine tiled -> reference (--occlusion-compositing on runs on the reference engine in 0.5.2)` (or `gpu`). An engine that cannot run stops the render with an error and exit 2; see [Troubleshooting](troubleshooting.md#engine-not-available). There is no silent fallback.
+
 ## Resolution, time and memory
 
-| Setting | Time on an Apple Silicon Mac (dev machine) | Memory |
+| Setting | Time on an Apple Silicon Mac (M4 Max) | Peak memory |
 | --- | --- | --- |
-| `--downres 2048` | about 18 seconds | not measured |
-| native, 5712 px on the long edge | not measured for 0.5.0 | not measured; the guard below applies |
+| `--downres 2048`, `reference` | about 10 seconds | about 3.8 GB |
+| `--downres 2048`, `tiled` or `gpu` | about 3.4 seconds | about 3.6 GB |
+| native, 5712 px on the long edge, `reference` | about 100 seconds | about 11 GB |
+| native, `tiled` | about 14 seconds | about 9.0 GB |
+| native, `gpu` | about 13 seconds | about 9.5 GB |
 
-Use `--downres 2048` while iterating on the focus point and flags. A built-in guard estimates peak memory before rendering and stops with an error that names a `--downres` that fits. The budget is 12 GiB; change it with `ISUMMICRON_MAX_BYTES=<bytes>`.
+Times are the whole render, on the sample photo, with other apps running, so they are rough. Use `--downres 2048` while iterating on the focus point and flags. A built-in guard estimates peak memory before rendering and stops with an error that names a `--downres` that fits. The budget is 12 GiB; change it with `ISUMMICRON_MAX_BYTES=<bytes>`.
 
 ```bash
 export ISUMMICRON_MAX_BYTES=17179869184

@@ -424,7 +424,7 @@ def test_t7_changelog_links():
             # a release link is the tag URL; from 0.5.0 on it may instead compare with the previous release
             prev = versions[versions.index(v) + 1] if versions.index(v) + 1 < len(versions) else None
             ok = [f"{BASE}/releases/tag/v{v}"]
-            if v in ("0.5.0", "0.5.1"):
+            if v in ("0.5.0", "0.5.1", "0.5.2"):
                 ok = [f"{BASE}/compare/v{prev}...v{v}"]  # 0.5.0 carries the compare link (the first diff-sized release)
             assert refs[v] in ok, (v, refs[v])
     body = re.search(rf"(?ms)^## \[{re.escape(versions[0])}\][^\n]*\n(.*?)(?=^## \[|^\[[^\]]+\]:)", text)

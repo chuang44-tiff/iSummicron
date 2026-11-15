@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "isummicron"
-version = "0.5.1"
+version = "0.5.2"
 description = "Spatially varying bokeh for iPhone Portrait photos from ray-traced lens PSFs"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -31,6 +31,7 @@ heic         = ["pillow-heif>=0.14"]
 depth        = ["torch>=2.4,<3", "transformers>=4.45,<6"]
 hdr-macos    = ["pyobjc-framework-Quartz; sys_platform == 'darwin'"]
 eval-quality = ["scikit-image>=0.22"]
+gpu          = ["mlx==0.32.4; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 dev          = ["pytest>=8", "ruff==0.15.15", "pyyaml>=6"]
 
 [project.scripts]
@@ -51,6 +52,7 @@ packages = ["summicron"]
 pythonpath = ["."]
 markers = [
     "slow: marks tests as slow — loads real data, runs full render, or loads depth model (deselect with '-m \"not slow\"')",
+    "gpu: needs mlx on Apple silicon; skipped where mlx is absent",
 ]
 
 [tool.ruff.lint]

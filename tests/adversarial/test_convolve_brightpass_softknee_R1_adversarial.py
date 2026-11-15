@@ -236,6 +236,7 @@ def test_render_kwargs_stable_for_positional_callers():
         "occlusion_compositing",
         "slab_batch_size", "on_progress", "cancel", "stats",
         "bright_stamp_gain",  # S22 S1 (keyword-only tail)
+        "engine",  # S33 (keyword-only tail)
     ]
     assert params == expected, (
         f"render() signature drifted: got {params}, expected {expected}. "

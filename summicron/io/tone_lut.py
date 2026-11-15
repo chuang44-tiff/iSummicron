@@ -41,7 +41,34 @@ def _srgb_encode(linear: np.ndarray) -> np.ndarray:
     ).astype(np.float32)
 
 
-def fit_input_lut(hdr_lin: np.ndarray, sdr_lin: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _prep(hdr, sdr, hmax):
+    """Shared binning for the LUT and saturation fits (byte-exact, WP5).
+
+    Returns ``(hy, sy, edges, bins)`` where ``bins[i]`` (i = 1..64) holds the
+    flat pixel indices, in ascending pixel order, of
+    ``(digitize(hy, edges) == i) & (sy > _SDR_FLOOR)``: the same sets, in the
+    same order, as the per-bin boolean masks they replace, so every downstream
+    reduction sees identical arrays. One stable radix sort replaces 64 full-frame
+    mask passes; ``fit_input_tone`` computes it once for both fits.
+    """
+    hy = (hdr.astype(np.float32) @ LUMA_W).reshape(-1)
+    sy = (sdr.astype(np.float32) @ LUMA_W).reshape(-1)
+    edges = np.geomspace(_LO_EDGE, hmax * 1.01, _N_BINS + 1)
+    idx = np.digitize(hy, edges)
+    ok = sy > _SDR_FLOOR
+    # idx in 0.._N_BINS+1 (<= 65): uint8 -> numpy radix sort (stable).
+    code = np.where(ok, idx, 0).astype(np.uint8)
+    order = np.argsort(code, kind="stable")
+    counts = np.bincount(code, minlength=_N_BINS + 2)
+    ends = np.cumsum(counts)
+    starts = ends - counts
+    bins = [None] * (_N_BINS + 2)
+    for i in range(1, _N_BINS + 1):
+        bins[i] = order[starts[i]:ends[i]]
+    return hy, sy, edges, bins
+
+
+def fit_input_lut(hdr_lin: np.ndarray, sdr_lin: np.ndarray, _bins=None) -> tuple[np.ndarray, np.ndarray]:
     """Fit the monotone luma LUT ``(xs, ys)`` mapping HDR linear luma to SDR linear luma.
 
     Both inputs are ``(H, W, 3)`` linear, same grid. Knots are the geometric bin
@@ -66,15 +93,12 @@ def fit_input_lut(hdr_lin: np.ndarray, sdr_lin: np.ndarray) -> tuple[np.ndarray,
             stacklevel=2,
         )
         return _identity()
-    hy = hdr.astype(np.float32) @ LUMA_W
-    sy = sdr.astype(np.float32) @ LUMA_W
-    edges = np.geomspace(_LO_EDGE, hmax * 1.01, _N_BINS + 1)
-    idx = np.digitize(hy, edges)
+    hy, sy, edges, bins = _bins if _bins is not None else _prep(hdr, sdr, hmax)
     xs = [0.0]
     ys = [0.0]
     for i in range(1, len(edges)):
-        s = (idx == i) & (sy > _SDR_FLOOR)
-        if s.sum() > _MIN_PIX:
+        s = bins[i]
+        if s.size > _MIN_PIX:
             xs.append(float(np.sqrt(edges[i - 1] * edges[i])))
             ys.append(float(np.median(sy[s])))
     if len(xs) < 3:
@@ -91,7 +115,7 @@ def _identity_sat() -> tuple[np.ndarray, np.ndarray]:
     return np.array([_LO_EDGE, 1.0]), np.array([1.0, 1.0])
 
 
-def fit_input_sat(hdr_lin: np.ndarray, sdr_lin: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def fit_input_sat(hdr_lin: np.ndarray, sdr_lin: np.ndarray, _bins=None) -> tuple[np.ndarray, np.ndarray]:
     """Fit the per-luma-bin saturation scale ``(kx, kk)`` (rev 3, C3).
 
     Apple's HDR->SDR mapping is not luma-only: the SDR base is ~15% less
@@ -114,18 +138,15 @@ def fit_input_sat(hdr_lin: np.ndarray, sdr_lin: np.ndarray) -> tuple[np.ndarray,
     hmax = float(hdr.max()) if hdr.size else 0.0
     if hmax <= 1.001:
         return _identity_sat()
-    hy = hdr.astype(np.float32) @ LUMA_W
-    sy = sdr.astype(np.float32) @ LUMA_W
-    edges = np.geomspace(_LO_EDGE, hmax * 1.01, _N_BINS + 1)
-    idx = np.digitize(hy, edges)
+    hy, sy, edges, bins = _bins if _bins is not None else _prep(hdr, sdr, hmax)
     kx: list[float] = []
     kk: list[float] = []
     for i in range(1, len(edges)):
-        s = (idx == i) & (sy > _SDR_FLOOR)
-        if s.sum() <= _MIN_PIX:
+        s = bins[i]
+        if s.size <= _MIN_PIX:
             continue
-        r = hdr[s].astype(np.float64) / np.maximum(hy[s], 1e-6).astype(np.float64)[:, None] - 1.0
-        rp = sdr[s].astype(np.float64) / sy[s].astype(np.float64)[:, None] - 1.0
+        r = hdr.reshape(-1, 3)[s].astype(np.float64) / np.maximum(hy[s], 1e-6).astype(np.float64)[:, None] - 1.0
+        rp = sdr.reshape(-1, 3)[s].astype(np.float64) / sy[s].astype(np.float64)[:, None] - 1.0
         den = float((r * r).sum())
         if den <= 1e-9:
             continue
@@ -140,8 +161,16 @@ def fit_input_tone(
     hdr_lin: np.ndarray, sdr_lin: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Convenience: ``(xs, ys, kx, kk)`` = luma LUT + saturation scale."""
-    xs, ys = fit_input_lut(hdr_lin, sdr_lin)
-    kx, kk = fit_input_sat(hdr_lin, sdr_lin)
+    hdr = np.asarray(hdr_lin)
+    sdr = np.asarray(sdr_lin)
+    bins = None
+    if hdr.shape == sdr.shape and hdr.size and np.isfinite(hdr).all() \
+            and np.isfinite(sdr).all():
+        hmax = float(hdr.max())
+        if hmax > 1.001:  # both fits bin; otherwise each returns early itself
+            bins = _prep(hdr, sdr, hmax)
+    xs, ys = fit_input_lut(hdr_lin, sdr_lin, bins)
+    kx, kk = fit_input_sat(hdr_lin, sdr_lin, bins)
     return xs, ys, kx, kk
 
 

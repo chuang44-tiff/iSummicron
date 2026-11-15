@@ -47,6 +47,7 @@ def test_invalid_raises_exact_message(kw, msg):
         {"depth_source": "bogus"},
         {"hdr_source": "bogus"},
         {"shadow_match_mode": "bogus"},
+        {"engine": "bogus"},
     ],
 )
 def test_enum_fields_rejected(kw):
@@ -140,3 +141,11 @@ def test_default_tensor_load_emits_no_schema_warning():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         load_tensor(default_tensor_path())
+
+
+def test_engine_enum_default_and_gpu_accepted():
+    assert RenderOptions(image_path=IMG).engine == "reference"
+    # "gpu" is a valid enum value; availability (mlx, Metal) is checked at
+    # render time, not here.
+    assert RenderOptions(image_path=IMG, engine="gpu").engine == "gpu"
+    assert RenderOptions(image_path=IMG, engine="tiled").engine == "tiled"

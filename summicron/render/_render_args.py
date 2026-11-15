@@ -283,6 +283,21 @@ def add_render_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
              "Values > 1 retain N slabs and only cost memory; kept for "
              "compatibility. Output is bit-identical for every value.",
     )
+    parser.add_argument(
+        "--engine",
+        choices=["reference", "tiled", "gpu"],
+        default="reference",
+        help="Render engine. 'reference' (default): the exact full-frame "
+             "path. 'tiled': opt-in CPU engine that convolves in overlapping "
+             "tiles with the same lens kernels (several times faster, equal "
+             "to the reference within 1e-5 relative in linear light on real "
+             "scenes; looser on extreme HDR stress inputs, see the README). "
+             "'gpu': opt-in MLX engine on Apple silicon (needs the [gpu] "
+             "extra), same tiles and lens kernels as 'tiled', equal to the "
+             "reference within 1e-4 relative in linear light (p99.9 within "
+             "1e-5). With --occlusion-compositing on, the reference engine "
+             "runs and a note is printed.",
+    )
     # ---- R-occlusion-layering (HALO-ONLY) -----------------------------------
     parser.add_argument(
         "--occlusion-compositing",

@@ -85,6 +85,9 @@ class RenderOptions:
     occlusion_compositing: Literal["off", "on"] = "off"  # R-occlusion-layering
     bright_stamp: Literal["auto", "peak", "l1"] = "auto"
     bright_stamp_gain: float | None = None  # None -> 2.0 under an l1 stamp
+    # S33: "gpu" is the opt-in MLX engine (Apple silicon, [gpu] extra); an
+    # unavailable engine is refused at render time, not here.
+    engine: Literal["reference", "tiled", "gpu"] = "reference"
     return_linear: bool = False  # opt-in for LDR-mode linear array
     # API-only (no CLI flag): False skips every disk write (GUI/probe use);
     # RenderResult.output_path is then None.
@@ -332,6 +335,7 @@ _ENUM_FIELDS = (
     ("shadow_match_mode", "--shadow-match-mode", ("off", "on")),
     ("lens", "--lens", ("35", "50", None)),
     ("bright_stamp", "--bright-stamp", ("auto", "peak", "l1")),
+    ("engine", "--engine", ("reference", "tiled", "gpu")),
 )
 
 

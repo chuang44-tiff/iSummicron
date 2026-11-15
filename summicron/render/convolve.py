@@ -10,6 +10,7 @@ import gc
 import logging
 import math
 import os
+import platform
 import sys
 import threading
 import warnings
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Callable
 
 import numpy as np
+import scipy
 import scipy.fft as sp_fft
 from scipy.ndimage import rotate as ndimage_rotate
 from scipy.ndimage import zoom as ndimage_zoom
@@ -131,9 +133,31 @@ def downres_array(image: np.ndarray, target_long_edge: int) -> np.ndarray:
     scale = target_long_edge / long_edge
     new_w = max(1, int(round(w * scale)))
     new_h = max(1, int(round(h * scale)))
-    if image.max() > 1.001:
+    _mx = image.max()
+    if _mx > 1.001:
         # HDR path: preserve float32 headroom via scipy bilinear zoom.
         zoom_factors = (new_h / h, new_w / w, 1.0)
+        if (
+            image.ndim == 3
+            and np.isfinite(_mx)
+            and np.isfinite(image.min())
+        ):
+            # S33 WP5 (byte-exact): the channel zoom factor is exactly 1.0, so
+            # each channel is an independent 2-D bilinear zoom; run them on
+            # threads (scipy releases the GIL). Finite data only: with an Inf the
+            # 3-D form's zero-weight neighbour term could yield NaN.
+            from concurrent.futures import ThreadPoolExecutor
+
+            nch = image.shape[2]
+            with ThreadPoolExecutor(max_workers=min(nch, 4)) as _ex:
+                chans = list(_ex.map(
+                    lambda c: ndimage_zoom(
+                        np.ascontiguousarray(image[:, :, c]),
+                        zoom_factors[:2], order=1,
+                    ),
+                    range(nch),
+                ))
+            return np.stack(chans, axis=-1).astype(np.float32)
         return ndimage_zoom(image, zoom_factors, order=1).astype(np.float32)
     # LDR path: unchanged (bit-identical to pre-fix for LDR input).
     from PIL import Image as _PILImage
@@ -1301,6 +1325,33 @@ def _build_image_fft_state(
     }
 
 
+# S33 WP2: staged FFTs. Enabled only on the one build the byte-equality proof
+# covers; everywhere else today's rfft2/irfft2 run (byte-identical by definition).
+_STAGED_FFT = (
+    scipy.__version__ == "1.17.1"
+    and platform.machine() == "arm64"
+    and sys.platform == "darwin"
+)
+
+
+def _kernel_rfft2_staged(k: np.ndarray, fshape) -> np.ndarray:
+    """``sp_fft.rfft2(k, s=fshape)`` computed as a row rfft over the kernel's
+    own rows (the rest are exact zeros) followed by the column fft."""
+    n0, n1 = int(fshape[0]), int(fshape[1])
+    spec = np.zeros((n0, n1 // 2 + 1), dtype=np.complex64)
+    spec[: k.shape[0]] = sp_fft.rfft(k, n=n1, axis=1)
+    return sp_fft.fft(spec, axis=0)
+
+
+def _irfft2_rows(X: np.ndarray, fshape, r0: int, r1: int) -> np.ndarray:
+    """Rows ``r0:r1`` of ``sp_fft.irfft2(X, s=fshape)``: full column ifft
+    (unscaled), then the row irfft on the requested rows only."""
+    n0, n1 = int(fshape[0]), int(fshape[1])
+    y = sp_fft.ifft(X, axis=0, norm="forward")
+    rows = sp_fft.irfft(y[r0:r1], n=n1, axis=1, norm="forward")
+    return rows * np.float32(1.0 / (n0 * n1))
+
+
 def _fftconvolve_hoisted(
     img_F_c: np.ndarray, kernel: np.ndarray, fshape, slice_y, slice_x
 ) -> np.ndarray:
@@ -1313,9 +1364,28 @@ def _fftconvolve_hoisted(
     the ≤1 uint8 contract from
     ``tests/unit/test_back_compat_canonical.py`` is the gate).
     """
+    if _STAGED_FFT:
+        ker_F = _kernel_rfft2_staged(kernel, fshape)
+        full = _irfft2_rows(img_F_c * ker_F, fshape, slice_y.start, slice_y.stop)
+        return full[:, slice_x].astype(np.float32, copy=False)
     ker_F = sp_fft.rfft2(kernel, s=fshape)
     full = sp_fft.irfft2(img_F_c * ker_F, s=fshape)
     return full[slice_y, slice_x].astype(np.float32, copy=False)
+
+
+def _support_bbox(wt: np.ndarray, support: np.ndarray):
+    """S33 WP1: bbox ``(y0, y1, x0, x1)`` of ``(wt > 0) & support``, or None
+    when that set is empty (the unit adds only +0/-0 where it matters)."""
+    m = (wt > 0) & support
+    rows = m.any(axis=1)
+    if not rows.any():
+        return None
+    cols = m.any(axis=0)
+    y0 = int(rows.argmax())
+    y1 = int(rows.shape[0] - rows[::-1].argmax())
+    x0 = int(cols.argmax())
+    x1 = int(cols.shape[0] - cols[::-1].argmax())
+    return y0, y1, x0, x1
 
 
 def _apply_kernel(
@@ -1325,8 +1395,19 @@ def _apply_kernel(
     *,
     fft_state: dict | None = None,
     bright_stamp_gain: float | None = None,
+    slab_support: np.ndarray | None = None,
 ):
     """Apply kernel_base via the is_delta/angular-scatter body.
+
+    S33 WP1: ``slab_support`` (keyword-only, default None = today's
+    arithmetic) is the boolean ``(H, W)`` mask ``slab_w[d] != 0`` of the
+    current slab. On the hoisted path a unit whose ``(w_ang > 0) & support``
+    is empty skips all FFT work, and a unit with support restricts the
+    mask/accumulate to the bbox of that set. Weight sums are still added over
+    the full ``w`` / ``w_ang`` so the gather's 5-tuple stays byte-equal; only
+    per-slab ``out_d``/``out_b_d`` at ``sw_d == 0`` pixels differ, and those
+    are multiplied by ``mix = 0`` and never read by holes-fill. The
+    ``fft_state=None`` legacy branch ignores it.
 
     S22 S1: ``bright_stamp_gain`` selects the bright-pass stamp (None = peak
     stamp, today's arithmetic; a float = L1 stamp ``rotated * gain``).
@@ -1392,9 +1473,22 @@ def _apply_kernel(
         # is_delta carve-out (Skeptic #3): hoist applies — we still reuse
         # the pre-computed `img_F` per channel, so even the 6 % delta
         # branch benefits from one fewer FFT per channel.
+        bb = None
+        if slab_support is not None:
+            bb = _support_bbox(w, slab_support)
+            if bb is None:
+                weight_sum += w
+                delta_weight_sum += w
+                return
         for c in range(3):
             conv = _fftconvolve_hoisted(img_F[c], kernel_base, fshape, sy, sx)
-            output[:, :, c] += w * conv[pad:pad + H, pad:pad + W]
+            if bb is None:
+                output[:, :, c] += w * conv[pad:pad + H, pad:pad + W]
+            else:
+                y0, y1, x0, x1 = bb
+                output[y0:y1, x0:x1, c] += w[y0:y1, x0:x1] * conv[
+                    pad + y0:pad + y1, pad + x0:pad + x1
+                ]
         weight_sum += w
         delta_weight_sum += w
     else:
@@ -1403,6 +1497,12 @@ def _apply_kernel(
             w_ang = (w * angular_mask).astype(np.float32)
             if w_ang.max() < 0.01:
                 continue
+            bb = None
+            if slab_support is not None:
+                bb = _support_bbox(w_ang, slab_support)
+                if bb is None:
+                    weight_sum += w_ang
+                    continue
             theta_a = (a + 0.5) * (2 * np.pi / N_ANG) - np.pi
             rot_deg = -(theta_a * 180.0 / np.pi + 90.0)
             rotated = ndimage_rotate(kernel_base, rot_deg, reshape=False, order=1)
@@ -1410,22 +1510,98 @@ def _apply_kernel(
             rotated /= rotated.sum() + 1e-12
             rotated_bright = _bright_stamp(rotated, bright_stamp_gain)
             # rotated_bright differs from rotated (stamp), so two rfft2s.
+            if _STAGED_FFT:
+                # S33 WP2: staged FFTs; inverse on the needed rows only.
+                ker_diffuse_F = _kernel_rfft2_staged(rotated, fshape)
+                ker_bright_F = _kernel_rfft2_staged(rotated_bright, fshape)
+                if bb is None:
+                    ry0, ry1, rx0, rx1 = 0, H, 0, W
+                    w_use = w_ang
+                    out_sl = (slice(None), slice(None))
+                else:
+                    ry0, ry1, rx0, rx1 = bb
+                    w_use = w_ang[ry0:ry1, rx0:rx1]
+                    out_sl = (slice(ry0, ry1), slice(rx0, rx1))
+                r0 = sy.start + pad + ry0
+                cs = slice(sx.start + pad + rx0, sx.start + pad + rx1)
+                for c in range(3):
+                    rows_d = _irfft2_rows(
+                        img_diffuse_F[c] * ker_diffuse_F, fshape, r0, r0 + (ry1 - ry0)
+                    )
+                    output[out_sl + (c,)] += w_use * rows_d[:, cs].astype(
+                        np.float32, copy=False
+                    )
+                    rows_b = _irfft2_rows(
+                        img_bright_F[c] * ker_bright_F, fshape, r0, r0 + (ry1 - ry0)
+                    )
+                    output_bright[out_sl + (c,)] += w_use * rows_b[:, cs].astype(
+                        np.float32, copy=False
+                    )
+                weight_sum += w_ang
+                continue
             ker_diffuse_F = sp_fft.rfft2(rotated, s=fshape)
             ker_bright_F = sp_fft.rfft2(rotated_bright, s=fshape)
-            for c in range(3):
-                conv_d_full = sp_fft.irfft2(
-                    img_diffuse_F[c] * ker_diffuse_F, s=fshape
-                )
-                output[:, :, c] += w_ang * conv_d_full[sy, sx][
-                    pad:pad + H, pad:pad + W
-                ].astype(np.float32, copy=False)
-                conv_b_full = sp_fft.irfft2(
-                    img_bright_F[c] * ker_bright_F, s=fshape
-                )
-                output_bright[:, :, c] += w_ang * conv_b_full[sy, sx][
-                    pad:pad + H, pad:pad + W
-                ].astype(np.float32, copy=False)
+            if bb is None:
+                for c in range(3):
+                    conv_d_full = sp_fft.irfft2(
+                        img_diffuse_F[c] * ker_diffuse_F, s=fshape
+                    )
+                    output[:, :, c] += w_ang * conv_d_full[sy, sx][
+                        pad:pad + H, pad:pad + W
+                    ].astype(np.float32, copy=False)
+                    conv_b_full = sp_fft.irfft2(
+                        img_bright_F[c] * ker_bright_F, s=fshape
+                    )
+                    output_bright[:, :, c] += w_ang * conv_b_full[sy, sx][
+                        pad:pad + H, pad:pad + W
+                    ].astype(np.float32, copy=False)
+            else:
+                y0, y1, x0, x1 = bb
+                w_bb = w_ang[y0:y1, x0:x1]
+                for c in range(3):
+                    conv_d_full = sp_fft.irfft2(
+                        img_diffuse_F[c] * ker_diffuse_F, s=fshape
+                    )
+                    output[y0:y1, x0:x1, c] += w_bb * conv_d_full[sy, sx][
+                        pad + y0:pad + y1, pad + x0:pad + x1
+                    ].astype(np.float32, copy=False)
+                    conv_b_full = sp_fft.irfft2(
+                        img_bright_F[c] * ker_bright_F, s=fshape
+                    )
+                    output_bright[y0:y1, x0:x1, c] += w_bb * conv_b_full[sy, sx][
+                        pad + y0:pad + y1, pad + x0:pad + x1
+                    ].astype(np.float32, copy=False)
             weight_sum += w_ang
+
+
+def _build_basis_crops(radial_frac_map, r_centers, wedge_idx):
+    """S33 WP3: radial basis as per-(ri, wedge) crops (never the dense array).
+
+    Returns ``crops[ri]`` = list of ``(y0, y1, x0, x1, crop)`` where ``crop``
+    is the region of ``_radial_basis_weights(...)[ri]`` (byte-equal) inside
+    the bbox of ``(basis[ri] > 0) & (wedge_idx == a)``. basis >= 0 and is
+    zero outside the union of the crops of its ``ri`` (every pixel has a
+    wedge), so pasting the crops into zeros reproduces ``basis_w[ri]``.
+    """
+    Nr = int(len(r_centers))
+    basis_w = _radial_basis_weights(radial_frac_map, r_centers)
+    crops = []
+    for ri in range(Nr):
+        pos = basis_w[ri] > 0
+        lst = []
+        for a in range(N_ANG):
+            m = pos & (wedge_idx == a)
+            rows = np.flatnonzero(m.any(axis=1))
+            if rows.size == 0:
+                continue
+            cols = np.flatnonzero(m.any(axis=0))
+            y0, y1 = int(rows[0]), int(rows[-1]) + 1
+            x0, x1 = int(cols[0]), int(cols[-1]) + 1
+            lst.append((y0, y1, x0, x1, basis_w[ri, y0:y1, x0:x1].copy()))
+        crops.append(lst)
+        del pos
+    del basis_w
+    return crops
 
 
 def _scatter_one_slab_fixed_d_basis(
@@ -1439,6 +1615,8 @@ def _scatter_one_slab_fixed_d_basis(
     *,
     fft_state: dict | None = None,
     bright_stamp_gain: float | None = None,
+    slab_support: np.ndarray | None = None,
+    basis_crops=None,
 ):
     """P1.10.1 per-pixel radial-basis scatter — layered (fixed-D) path.
 
@@ -1453,14 +1631,24 @@ def _scatter_one_slab_fixed_d_basis(
     from summicron.render.api import CancelledError
 
     Nr = int(len(r_centers))
-    basis_w = _radial_basis_weights(radial_frac_map, r_centers)  # (Nr, H, W)
+    # S33 WP3: ``basis_crops`` (from _build_basis_crops) replaces the
+    # per-slab dense build; None builds as today.
+    basis_w = (
+        None if basis_crops is not None
+        else _radial_basis_weights(radial_frac_map, r_centers)  # (Nr, H, W)
+    )
     for ri in range(Nr):
         if cancel is not None and cancel.is_set():
             raise CancelledError(
                 f"render cancelled inside slab {d_idx}, "
                 f"radial bin {ri}/{Nr}"
             )
-        w = basis_w[ri].astype(np.float32)
+        if basis_crops is None:
+            w = basis_w[ri].astype(np.float32)
+        else:
+            w = np.zeros((H, W), dtype=np.float32)
+            for (cy0, cy1, cx0, cx1, crop) in basis_crops[ri]:
+                w[cy0:cy1, cx0:cx1] = crop
         if w.max() < 0.01:
             continue
         kernel_base = _build_basis_kernel(
@@ -1472,6 +1660,7 @@ def _scatter_one_slab_fixed_d_basis(
             wedge_idx, pad, H, W,
             output, output_bright, weight_sum, delta_weight_sum,
             fft_state=fft_state, bright_stamp_gain=bright_stamp_gain,
+            slab_support=slab_support,
         )
 
 
@@ -1485,6 +1674,8 @@ def _layered_gather_diffuse(
     emit_log=True,
     bright_stamp_gain=None,
     active_slab_cap=None,
+    slab_support_skip=True,
+    basis_hoist=True,
 ):
     """The P1.12 depth-layered-gather diffuse assembly — the LIVE OFF path.
 
@@ -1550,6 +1741,12 @@ def _layered_gather_diffuse(
     _warned_cap = False
     from summicron.render.api import CancelledError
 
+    # S33 WP3: radial basis built once per gather as per-(ri, wedge) crops.
+    basis_crops = (
+        _build_basis_crops(radial_frac_map, r_centers, wedge_idx)
+        if basis_hoist else None
+    )
+
     for batch_start in range(0, D_gate, batch_size):
         batch_end = min(batch_start + batch_size, D_gate)
         batch_alpha: list[np.ndarray | None] = [None] * (batch_end - batch_start)
@@ -1582,6 +1779,8 @@ def _layered_gather_diffuse(
             wsum_d = np.zeros((H, W), dtype=np.float32)
             delta_wsum_d = np.zeros((H, W), dtype=np.float32)
 
+            # S33 WP1: slab support mask (False reproduces the reference).
+            support_d = (sw_d != 0) if slab_support_skip else None
             with sp_fft.set_workers(-1):
                 _scatter_one_slab_fixed_d_basis(
                     d_idx=d,
@@ -1599,7 +1798,10 @@ def _layered_gather_diffuse(
                     cancel=cancel,
                     fft_state=fft_state,
                     bright_stamp_gain=bright_stamp_gain,
+                    slab_support=support_d,
+                    basis_crops=basis_crops,
                 )
+            del support_d
 
             # Per-slab normalize by spatial-slab weight_sum (radial partition).
             wsum_d_safe = np.maximum(wsum_d, 1e-8)
@@ -1672,6 +1874,9 @@ def _layered_gather_diffuse(
     return output, output_bright, weight_sum, delta_weight_sum, acc_alpha
 
 
+_ENGINE_NAMES = ("reference", "tiled", "gpu")
+
+
 def render(
     image_srgb: np.ndarray,
     tensor: dict,
@@ -1688,8 +1893,17 @@ def render(
     cancel: threading.Event | None = None,
     stats: dict | None = None,
     bright_stamp_gain: float | None = None,
+    engine: str = "reference",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Bin-and-convolve render pipeline.
+
+    ``engine`` (S33): ``"reference"`` (default, the exact full-frame path,
+    byte-identical), ``"tiled"`` (opt-in tiled overlap-save CPU engine) or
+    ``"gpu"`` (opt-in MLX engine on Apple silicon, same tiles and kernel bank
+    as ``"tiled"``; an unavailable gpu engine raises ``ValueError`` first,
+    before any other engine rule, with or without occlusion compositing).
+    With ``occlusion_compositing="on"`` ``"tiled"`` and ``"gpu"`` run the
+    reference engine and print one ``note:`` line.
 
     ``stats`` (CLI-1b): opt-in diagnostics sink. When a dict is passed it is
     filled with ``bright_pixels_pct`` (float), ``alpha_mean`` (float) and
@@ -1793,6 +2007,22 @@ def render(
         raise ValueError(
             f"hdr_source must be 'none' or 'macos', got {hdr_source!r}"
         )
+
+    # S33 engine switch (locked-spec-S33-tiled 3.2, steps 1-3).
+    if engine not in _ENGINE_NAMES:
+        raise ValueError(
+            f"engine must be one of {_ENGINE_NAMES!r}, got {engine!r}"
+        )
+    if engine == "gpu":
+        from summicron.render._engine_gpu import availability
+
+        _gpu_reason = availability()
+        if _gpu_reason is not None:
+            raise ValueError(
+                f"engine 'gpu' is not available: {_gpu_reason} (install the "
+                f"[gpu] extra on Apple silicon, or use --engine reference or "
+                f"tiled)"
+            )
 
     # R-occlusion-layering: validate occlusion_compositing mode. "off"
     # (default) is the bit-identical kill-switch; "on" dispatches to the
@@ -1954,6 +2184,30 @@ def render(
         scaled_ksize = kH
     pad = scaled_ksize // 2
 
+    # S33 engine switch, steps 3-4: resolve the effective engine (pure), then
+    # refuse an unsupported tiled configuration before the memory guard.
+    from summicron.render._resolve import resolve_engine
+
+    _engine_eff, _engine_note = resolve_engine(engine, occlusion_compositing)
+    if _engine_eff in ("tiled", "gpu"):
+        _tiled_why = None
+        if kH != kW:
+            _tiled_why = f"a non-square kernel ({kH}x{kW})"
+        elif scaled_ksize > 255:
+            _tiled_why = f"a kernel side {scaled_ksize} > 255"
+        elif _engine_eff == "gpu" and pad != scaled_ksize // 2:
+            _tiled_why = f"a non-standard pad ({pad})"
+        elif _engine_eff == "gpu" and kernels.shape[0] < 2:
+            _tiled_why = f"fewer than 2 radial bins ({kernels.shape[0]})"
+        # (for tiled a non-standard pad is refused inside
+        # ``tiled_layered_gather``; here ``pad == scaled_ksize // 2`` by
+        # construction.)
+        if _tiled_why is not None:
+            raise ValueError(
+                f"engine '{_engine_eff}' is not available for {_tiled_why}; "
+                f"use --engine reference"
+            )
+
     # R-native-mem item 7: byte-budget guard (D is known; the "Memory budget"
     # line is routed through ``on_progress`` and silenced on the CLI path so
     # canonical-bench stdout, and therefore the G1 md5 pins, are unchanged).
@@ -2007,8 +2261,11 @@ def render(
     # canonical bench this is the headline perf win. Memory cost: 9 ×
     # complex64 spectra at next_fast_len(H_pad+k-1, W_pad+k-1) shape;
     # ≈ 36 MB at 2048² (immaterial vs the 1.3 GB peak RSS budget).
-    fft_state = _build_image_fft_state(
-        img_padded, img_diffuse_padded, img_bright_padded, scaled_ksize
+    fft_state = (
+        None if _engine_eff in ("tiled", "gpu")
+        else _build_image_fft_state(
+            img_padded, img_diffuse_padded, img_bright_padded, scaled_ksize
+        )
     )
 
     # Layered gather is the SOLE rendering path (CLI-1a). R-native-mem item 5:
@@ -2030,6 +2287,8 @@ def render(
         # caller recombines them at the unchanged bright-add below.
         from summicron.render._layered_composite import _layered_composite
 
+        if _engine_note is not None:
+            _emit(on_progress, _engine_note)
         object_distances_m = tensor.get("object_distances_m")
         slab_w = compute_slab_weights(depth_m, object_distances_m)
         (
@@ -2074,9 +2333,19 @@ def render(
         # PURE EXTRACTION (pre-Q-b pin md5 38c75dd2... was the old pin; current is G1_MD5 in _bench.py).
         object_distances_m = tensor.get("object_distances_m")
         slab_w = compute_slab_weights(depth_m, object_distances_m)
+        if _engine_eff == "tiled":
+            from summicron.render._engine_tiled import tiled_layered_gather
+
+            _gather_fn = tiled_layered_gather
+        elif _engine_eff == "gpu":
+            from summicron.render._engine_gpu import gpu_layered_gather
+
+            _gather_fn = gpu_layered_gather
+        else:
+            _gather_fn = _layered_gather_diffuse
         (
             output, output_bright, weight_sum, delta_weight_sum, acc_alpha
-        ) = _layered_gather_diffuse(
+        ) = _gather_fn(
             depth_m=depth_m, slab_w=slab_w, img_lin=img_lin,
             img_padded=img_padded, img_diffuse_padded=img_diffuse_padded,
             img_bright_padded=img_bright_padded,
@@ -2298,6 +2567,19 @@ def _monocular_depth(image_srgb, load_depth_model, estimate_depth, *, fallback):
     return (depth_01 * FAR_M).astype(np.float32)
 
 
+def _load_sdr_base_linear(image_path, downres) -> np.ndarray:
+    """The SDR base of ``--tonemap input-lut``: sRGB load, optional downres,
+    byte scaling guard, linearisation. Pure; runs on the calling thread (the
+    pipeline may prefetch it on a worker, S33 WP5)."""
+    sdr_base = load_image(image_path)
+    if downres is not None:
+        sdr_base = downres_array(sdr_base, downres)
+    sdr_base = sdr_base.astype(np.float32)
+    if float(sdr_base.max()) > 1.5:
+        sdr_base = sdr_base / 255.0
+    return srgb_to_linear(sdr_base)
+
+
 def _run_render_pipeline(
     opts,
     *,
@@ -2413,6 +2695,28 @@ def _run_render_pipeline(
             new_w,
         ):
             ldr_ref_linear = downres_array(ldr_ref_linear, opts.downres)
+
+    # S33 WP5: the input-lut SDR base does not depend on depth or the mode
+    # resolution, so decode it on a worker while those run. Started only when
+    # ``resolve_auto`` will pick input-lut (explicit, or auto with finite HDR
+    # headroom and no shadow match), so the ci path still does no second load.
+    # The result is identical to the inline path; a failed prefetch surfaces
+    # only where the inline path would have raised it.
+    _sdr_ex = _sdr_fut = None
+    if hdr_src == "macos" and (
+        opts.tonemap == "input-lut"
+        or (
+            opts.tonemap == "auto"
+            and opts.shadow_match_mode != "on"
+            and bool(np.isfinite(image_srgb).all())
+            and float(image_srgb.max()) > 1.001
+        )
+    ):
+        from concurrent.futures import ThreadPoolExecutor
+        _sdr_ex = ThreadPoolExecutor(max_workers=1)
+        _sdr_fut = _sdr_ex.submit(
+            _load_sdr_base_linear, image_path, opts.downres
+        )
 
     def _resolve_focus_target(tensor):
         focus_target_m = opts.focus_target_m
@@ -2552,13 +2856,11 @@ def _run_render_pipeline(
     lut_xs = lut_ys = lut_sat = None
     if modes.tonemap == "input-lut":
         from summicron.io.tone_lut import auto_bright_threshold, fit_input_tone
-        sdr_base = load_image(image_path)
-        if opts.downres is not None:
-            sdr_base = downres_array(sdr_base, opts.downres)
-        sdr_base = sdr_base.astype(np.float32)
-        if float(sdr_base.max()) > 1.5:
-            sdr_base = sdr_base / 255.0
-        sdr_base = srgb_to_linear(sdr_base)
+        if _sdr_fut is not None:
+            sdr_base = _sdr_fut.result()
+        else:
+            sdr_base = _load_sdr_base_linear(image_path, opts.downres)
+        _sdr_fut = None
         if float(image_srgb.max()) <= 1.001:
             _emit(on_progress, "  tonemap input-lut: no HDR headroom; LUT ~ identity")
         lut_xs, lut_ys, _kx, _kk = fit_input_tone(image_srgb, sdr_base)
@@ -2579,6 +2881,9 @@ def _run_render_pipeline(
             1.0 if opts.bright_pass_thresh in (None, "auto")
             else float(opts.bright_pass_thresh)
         )
+    if _sdr_ex is not None:
+        _sdr_ex.shutdown(wait=False)  # prefetch used (done) or dropped (unused)
+        _sdr_fut = _sdr_ex = None
     if opts.tensor_path is None and opts.lens == "50":
         name_suffix += "_lens50"
     if fam.bright_stamp == "peak":
@@ -2611,6 +2916,7 @@ def _run_render_pipeline(
         cancel=cancel,
         stats=render_stats,
         bright_stamp_gain=fam.bright_stamp_gain,
+        engine=opts.engine,
     )
 
     # Q-a: focus-fidelity metrics on the pre-shadow-match linear output.

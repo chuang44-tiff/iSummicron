@@ -186,3 +186,30 @@ def resolve_auto(
         hdr_source=hdr, depth_source=src, depth_guided=gd, depth_mapping=mp, tonemap=tm,
         notes=tuple(notes), warnings=tuple(warns), any_auto=any_auto,
     )
+
+
+# S33 engine switch. The note is printed only when a non-reference engine is
+# requested together with --occlusion-compositing on.
+ENGINE_NAMES = ("reference", "tiled", "gpu")
+ENGINE_ON_NOTE = (
+    "note: engine tiled -> reference (--occlusion-compositing on runs on the "
+    "reference engine in 0.5.2)"
+)
+ENGINE_ON_NOTE_GPU = (
+    "note: engine gpu -> reference (--occlusion-compositing on runs on the "
+    "reference engine in 0.5.2)"
+)
+
+
+def resolve_engine(engine: str, occlusion_compositing: str):
+    """Pure. Returns ``(effective_engine, note_or_None)``.
+
+    ``tiled`` / ``gpu`` with occlusion compositing ON fall back to
+    ``reference`` with ``ENGINE_ON_NOTE`` / ``ENGINE_ON_NOTE_GPU``; every other combination is returned unchanged with no
+    note (the default engine never prints a note).
+    """
+    if engine == "tiled" and occlusion_compositing == "on":
+        return "reference", ENGINE_ON_NOTE
+    if engine == "gpu" and occlusion_compositing == "on":
+        return "reference", ENGINE_ON_NOTE_GPU
+    return engine, None

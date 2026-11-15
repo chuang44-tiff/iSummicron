@@ -2,6 +2,33 @@
 
 All notable changes to **iSummicron** are documented in this file. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.5.2] — 2026-11-15
+
+Speed. The default render is faster with the same output, and two opt-in engines are much faster.
+
+### Added
+
+- `--engine {reference,tiled,gpu}` (default `reference`), and `RenderOptions(engine=...)` in the Python API.
+  - `reference` is the existing full-frame path. Its output is byte-identical to 0.5.1.
+  - `tiled` is an opt-in CPU engine. It convolves in overlapping tiles with the same lens kernels as `reference` and skips tiles where a depth layer has no pixels, and runs the highlight pass only on tiles with bright pixels. On the sample photo at `--downres 2048` a render takes about 3.4 seconds instead of about 10; at full size about 14 seconds instead of about 100 (Apple M4 Max; a rough measurement, the machine was not idle).
+  - `gpu` is an opt-in engine on the Apple GPU, using MLX. Install it by adding `gpu` to the extras of the install command, for example `isummicron[heic,hdr-macos,gpu]` (Apple silicon only). It uses the same tiles and lens kernels as `tiled`; on the sample photo it is about as fast as `tiled` at 2048 and a few percent faster at full size.
+  - Precision. `tiled` and `gpu` are not bit-identical to `reference` and are not pinned by checksum. They are held to tolerances in linear light, measured per pixel as `e = |difference| / max(reference, 1)`, over the full frame and the field-edge ring (`radial_frac > 0.8`):
+    - `tiled`: max `e` at most 1e-5, p99.9 `e` at most 1e-6, total energy within 1e-5, and after tone mapping every 8-bit value within 1 level of `reference`.
+    - `gpu`: max `e` at most 1e-4, p99.9 `e` at most 1e-5, total energy within 1e-5, every 8-bit value within 1 level, PSNR at least 70 dB.
+    - These hold on the sample photos and the standard test charts. Extreme stress inputs (a peak-normalised stamp on HDR, large saturated patches, lights 50 to 1000 times white, `--bright-stamp-gain` 8 and above) are held only to a relative rule: the p99.9 error against a float64 truth is at most 1.5 times (`tiled`) or 7 times (`gpu`) the reference's own float32 error. Single-pixel maxima can exceed 1e-5 there, for the reference too. A light 100,000 times white is out of scope.
+    - The 4th digit of `bright_energy_ratio=` in the `bright-pass:` line can differ by 1 from `reference` when the ratio sits on a rounding boundary. `gpu` output is deterministic for a fixed batch configuration on one machine; bytes can differ across GPU families.
+  - Selecting an engine that cannot run is an error with exit 2, never a silent fallback: `render: engine 'gpu' is not available: ...` when mlx or a Metal GPU is missing, and `render: engine 'tiled' is not available for ...; use --engine reference` for a kernel side above 255 (custom `--tensor` only), a non-square kernel or a non-standard pad.
+  - With `--occlusion-compositing on`, both fast engines run the reference engine and print a `note: engine ... -> reference` line.
+  - Peak memory: at `--downres 2048` the tiled engine is at or below the reference; at full size it is lower (about 9.0 GB for `tiled` and 9.5 GB for `gpu`, against 11 GB, on the sample photo).
+
+### Changed
+
+- The `reference` engine is about 1.7 to 1.9 times faster on the sample photo with occlusion compositing off, and about 1.2 times faster with it on, with byte-identical output (it skips work outside each blur shape's support and computes the radial blend once per pass). The loading, depth-smoothing, planning and tone-curve steps around the blur also run faster, with the same output. Tensor files and bench checksums are unchanged.
+
+### Packaging
+
+- New optional extra `gpu` (`mlx==0.32.4`, installed only on macOS with Apple silicon). Without it, `--engine gpu` stops with the error above and the `gpu`-marked tests skip.
+
 ## [0.5.1] — 2026-11-12
 
 ### Documentation
@@ -137,6 +164,7 @@ JPG output is bit-exact at md5 level across 0.1.0 ↔ 0.2.0 on the canonical ben
 - Bring-your-own-tensor format documented in README.
 - Memory guard rejects pathological renders with actionable `--downres N` suggestion.
 
+[0.5.2]: https://github.com/chuang44-tiff/iSummicron/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/chuang44-tiff/iSummicron/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/chuang44-tiff/iSummicron/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/chuang44-tiff/iSummicron/releases/tag/v0.4.0

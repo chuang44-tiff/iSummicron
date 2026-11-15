@@ -49,7 +49,11 @@ Releases only, for now. Install the wheel from the GitHub Release (see the [READ
 
 ## Is the output deterministic?
 
-Yes, for a given version, machine and set of options.
+Yes, for a given version, machine and set of options. The default `reference` engine is byte-identical across 0.5.1 and 0.5.2. The opt-in `tiled` and `gpu` engines are deterministic on one machine too, but they are not bit-identical to `reference`; they stay within 1 level of it in the 8-bit output. `gpu` bytes can differ across GPU families.
+
+## Which engine should I use?
+
+Keep the default `reference` for the exact result. Use `--engine tiled` for about three times the speed at `--downres 2048` and seven times at full size, with a difference from `reference` that is not visible. Use `--engine gpu` (Apple silicon, installed with the `gpu` extra) when you have the extra installed; it is about as fast as `tiled` today. With `--occlusion-compositing on` both run the reference engine. See [Render engines](usage.md#render-engines).
 
 ## What changes between versions?
 

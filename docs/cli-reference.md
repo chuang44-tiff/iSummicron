@@ -120,6 +120,11 @@ Advanced. Tensor focus distance in meters (default: the tensor's own, 0.7 m for 
 Default: `unset`.
 Depth slabs per batch (default 1). Larger values only use more memory; output is identical.
 
+### `--engine {reference|tiled|gpu}`
+
+Default: `reference`. Choices: `reference`, `tiled`, `gpu`.
+Render engine. `reference` (default): the exact full-frame path. `tiled`: opt-in CPU engine that convolves in overlapping tiles with the same lens kernels; several times faster, equal to the reference within 1e-5 relative in linear light on real scenes. `gpu`: opt-in MLX engine on Apple silicon (needs the `gpu` extra), same tiles and lens kernels as `tiled`, equal to the reference within 1e-4 relative in linear light (p99.9 within 1e-5). A fast engine that is not available is a strict error (exit 2), never a silent fallback. With `--occlusion-compositing on` the reference engine runs and a note is printed.
+
 ## Shadow match (experimental)
 
 ### `--shadow-match-mode {off|on}`

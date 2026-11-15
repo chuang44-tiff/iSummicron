@@ -114,5 +114,11 @@ class TestCiWorkflow:
         doc = _ci()
         runs = " ".join(s.get("run", "") for j in doc["jobs"].values() for s in j["steps"])
         extras = set(_pyproject()["project"]["optional-dependencies"])
-        for name in extras:
+        # 0.5.2: the ``gpu`` extra (mlx, Apple silicon) is deliberately NOT installed
+        # in CI; its tests carry importorskip + the ``gpu`` marker and skip cleanly.
+        # Every other extra must be installed.
+        for name in extras - {"gpu"}:
             assert name in runs, f"extra {name!r} not installed in CI"
+        install = [s.get("run", "") for j in doc["jobs"].values() for s in j["steps"]
+                   if "pip install" in s.get("run", "")]
+        assert install and not any("gpu" in r or "mlx" in r for r in install), install

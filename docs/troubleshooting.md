@@ -51,6 +51,22 @@ The `--tensor` path does not exist. The PSF table bundled with earlier versions 
 
 Fix: pass one of them. `--lens` picks a bundled lens; `--tensor` uses your own file.
 
+## Engine not available
+
+```text
+engine 'gpu' is not available: … (install the [gpu] extra on Apple silicon, or use --engine reference or tiled)
+```
+
+`--engine gpu` needs the optional mlx package and a Metal GPU. The reason after the colon is `mlx is not importable` or `no Metal GPU device`. Fix: on an Apple-silicon Mac, install with the `gpu` extra (add `gpu` to the extras of the install command in the README, for example `isummicron[heic,hdr-macos,gpu]`), or use `--engine tiled` (same speed class on the CPU) or the default `--engine reference`. The extra installs nothing on Intel Macs, Linux and Windows. There is no silent fallback to another engine.
+
+```text
+engine '…' is not available for …; use --engine reference
+```
+
+`tiled` and `gpu` handle kernels up to 255 pixels on a side, square, with the standard pad. A custom `--tensor` outside that range (the two bundled lenses are inside it), or a table with fewer than 2 radial bins for `gpu`, stops with this error. Fix: use `--engine reference`.
+
+With `--occlusion-compositing on` there is no error: the reference engine runs and one line is printed, `note: engine tiled -> reference (--occlusion-compositing on runs on the reference engine in 0.5.2)` (`gpu` in place of `tiled` if you asked for it). The `gpu` error above comes first when mlx is missing.
+
 ## Image too large
 
 ```text

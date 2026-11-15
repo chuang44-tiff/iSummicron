@@ -46,13 +46,25 @@ def guided_filter(guide: np.ndarray, src: np.ndarray, r: int, eps: float) -> np.
         raise ValueError("r must be >= 1")
     if eps <= 0:
         raise ValueError("eps must be > 0")
-    mean_I = _box(I, r)
-    mean_p = _box(p, r)
-    cov_Ip = _box(I * p, r) - mean_I * mean_p
-    var_I = _box(I * I, r) - mean_I * mean_I
-    a = cov_Ip / (var_I + eps)
-    b = mean_p - a * mean_I
-    return _box(a, r) * I + _box(b, r)
+    # S33 WP5 (byte-exact): the box passes of one stage are independent calls
+    # of the same function on the same inputs, so they run on threads (scipy
+    # releases the GIL); every arithmetic expression is unchanged.
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        f_mi = ex.submit(_box, I, r)
+        f_mp = ex.submit(_box, p, r)
+        f_ip = ex.submit(lambda: _box(I * p, r))
+        f_ii = ex.submit(lambda: _box(I * I, r))
+        mean_I, mean_p = f_mi.result(), f_mp.result()
+        cov_Ip = f_ip.result() - mean_I * mean_p
+        var_I = f_ii.result() - mean_I * mean_I
+        a = cov_Ip / (var_I + eps)
+        b = mean_p - a * mean_I
+        f_a = ex.submit(_box, a, r)
+        box_b = _box(b, r)
+        box_a = f_a.result()
+    return box_a * I + box_b
 
 
 def guided_upsample_depth(

@@ -4,13 +4,13 @@
 
 A phone's portrait mode computes its blur. A real lens doesn't: its blur spots have bright rims, and toward the frame edge they turn into eggs and cat's eyes that circle the center. iSummicron ray-traces two lens designs to get those shapes (their point spread functions, or PSFs), then paints them into your photo using its depth map.
 
-[![Synthetic Christmas lights: the sharp input, a plain round disc and the real-lens 35 mm f/2 blur, bottom-left corner enlarged 2 times](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_xmas_zoom_input_disc_35.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_xmas_zoom_input_disc_35.jpg)
+[![Synthetic Christmas lights: the sharp input, a plain round disc and the real-lens 35 mm f/2 blur, bottom-left corner enlarged 2 times](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_xmas_zoom_input_disc_35.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_xmas_zoom_input_disc_35.jpg)
 
 Input (point lights enlarged for visibility) | plain round disc of matched size | real-lens blur, 35 mm default. A 2× crop of the bottom-left corner of one synthetic scene: point lights far behind a bauble that is in focus. The real lens turns each light into an oval or rounded box with a bright rim, tilted to face away from the frame center.
 
 The sample Portrait photo, left to right: the input, the iPhone's own Portrait-mode image, and the render with the 50 mm and the default 35 mm lens (click for full size). The iPhone panel is its Portrait image, upscaled from 600×800.
 
-[![Kitchen photo: input, iPhone Portrait, iSummicron 50 mm f/2 and 35 mm f/2](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_kitchen_4up.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_kitchen_4up.jpg)
+[![Kitchen photo: input, iPhone Portrait, iSummicron 50 mm f/2 and 35 mm f/2](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_kitchen_4up.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_kitchen_4up.jpg)
 
 **Who it's for:** lens designers and lens enthusiasts who want to see how a lens design's bokeh would look in a photo. iSummicron starts from the lens prescription itself and renders that design's look onto everyday iPhone Portrait photos, including the look of rare or historic lenses. That is why the PSFs are ray-traced from a prescription with optiland, not measured or learned: any published design can be traced, including lenses nobody owns or that are too rare to measure, and the bokeh character (cat-eye, swirl) follows from the optics.
 
@@ -28,10 +28,10 @@ macOS does not ship `python3.12`; install it first (for example `brew install py
 
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install "isummicron[heic,hdr-macos] @ https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/isummicron-0.5.1-py3-none-any.whl"
+pip install "isummicron[heic,hdr-macos] @ https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/isummicron-0.5.2-py3-none-any.whl"
 ```
 
-Or from the tag: `pip install "isummicron[heic,hdr-macos] @ git+https://github.com/chuang44-tiff/iSummicron@v0.5.1"`. Both lenses' blur-shape tables are inside the wheel. Installing from source, the optional extras and running the tests are in the [usage guide](docs/usage.md#installing-from-source).
+Or from the tag: `pip install "isummicron[heic,hdr-macos] @ git+https://github.com/chuang44-tiff/iSummicron@v0.5.2"`. Both lenses' blur-shape tables are inside the wheel. Installing from source, the optional extras and running the tests are in the [usage guide](docs/usage.md#installing-from-source).
 
 ## Try it
 
@@ -39,8 +39,8 @@ Download the sample Portrait HEIC from this release and verify it:
 
 ```bash
 mkdir -p iphoneImage && cd iphoneImage
-curl -LO https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/Demo_input.HEIC
-curl -LO https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/SHA256SUMS
+curl -LO https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/Demo_input.HEIC
+curl -LO https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/SHA256SUMS
 shasum -a 256 -c --ignore-missing SHA256SUMS && cd ..
 ```
 
@@ -50,28 +50,40 @@ The sample has its location and time metadata stripped and shows a person; the r
 isummicron render --image iphoneImage/Demo_input.HEIC --focus-xy 0.40 0.39 --depth-source lidar --downres 2048 --hdr-source macos --out-dir runs/render
 ```
 
-This takes about 18 seconds on an Apple M4 Max Mac and writes a `.jpg` and a `.png` into `runs/render`. The result, with the default 35 mm lens (click for full size; the second row is a 1:1 crop toward the right edge of the frame):
+This takes about 10 seconds on an Apple M4 Max Mac (about 3.4 seconds with `--engine tiled`, see [Speed](#speed)) and writes a `.jpg` and a `.png` into `runs/render`. The result, with the default 35 mm lens (click for full size; the second row is a 1:1 crop toward the right edge of the frame):
 
 | Before | After |
 | --- | --- |
-| [![Before: the input](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/Demo_input_before.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/Demo_input_before.jpg) | [![After: rendered with iSummicron](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/Demo_input_after.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/Demo_input_after.jpg) |
-| [![Before, edge crop](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/Demo_input_before_edge.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/Demo_input_before_edge.jpg) | [![After, edge crop](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/Demo_input_after_edge.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/Demo_input_after_edge.jpg) |
+| [![Before: the input](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/Demo_input_before.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/Demo_input_before.jpg) | [![After: rendered with iSummicron](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/Demo_input_after.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/Demo_input_after.jpg) |
+| [![Before, edge crop](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/Demo_input_before_edge.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/Demo_input_before_edge.jpg) | [![After, edge crop](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/Demo_input_after_edge.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/Demo_input_after_edge.jpg) |
 
 On your own Portrait photos on macOS, `isummicron render --image photo.HEIC --focus-xy X Y` picks the same depth and HDR settings automatically and renders at full size; add `--downres 2048` for the fast preview and `--lens 50` for the 50 mm lens. `--focus-xy X Y` is the in-focus point in normalized image coordinates (X is the column, Y the row, `(0, 0)` is the top-left); without it, the closest subject is in focus.
 
 The [usage guide](docs/usage.md) covers the focus picker, depth, HDR, memory and the common flags; the [CLI reference](docs/cli-reference.md) lists every flag. The same photo next to the iPhone's own Portrait mode is under [On a real photo](docs/how-it-works.md#on-a-real-photo).
 
+## Speed
+
+`--engine {reference,tiled,gpu}` picks how the blur is computed; the lens shapes are the same in all three.
+
+| Engine | What it is | Sample photo, `--downres 2048` | Sample photo, full size |
+| --- | --- | --- | --- |
+| `reference` (default) | The exact full-frame path. | about 10 s | about 100 s |
+| `tiled` | Opt-in CPU engine: overlapping tiles, skips tiles where a depth layer has no pixels, highlight pass only on tiles with bright pixels. | about 3.4 s | about 14 s |
+| `gpu` | Opt-in Apple-GPU engine (MLX): add `gpu` to the install extras (`isummicron[heic,hdr-macos,gpu]`), Apple silicon only. | about 3.3 s | about 13 s |
+
+Times are wall clock on an Apple M4 Max Mac; the machine was not idle, so read them as rough. `reference` output is byte-identical to 0.5.1. `tiled` and `gpu` are not bit-identical: they match `reference` in linear light to within 1e-5 (`tiled`) or 1e-4 (`gpu`) relative on real photos, and every 8-bit output value is within 1 level. With `--occlusion-compositing on` the reference engine runs and a note is printed. An engine that cannot run is an error, never a silent fallback. Details are in the [usage guide](docs/usage.md#render-engines) and the [changelog](CHANGELOG.md).
+
 ## How it works
 
-There is also an interactive explainer with a draggable animation and lens switches: [open it in your browser](https://chuang44-tiff.github.io/iSummicron/) (its [iPhone Portrait vs a real lens](https://chuang44-tiff.github.io/iSummicron/#phone) section is the same comparison, interactive). The same page is attached to each Release as [isummicron_pipeline.html](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/isummicron_pipeline.html), one self-contained file to download and open offline.
+There is also an interactive explainer with a draggable animation and lens switches: [open it in your browser](https://chuang44-tiff.github.io/iSummicron/) (its [iPhone Portrait vs a real lens](https://chuang44-tiff.github.io/iSummicron/#phone) section is the same comparison, interactive). The same page is attached to each Release as [isummicron_pipeline.html](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/isummicron_pipeline.html), one self-contained file to download and open offline.
 
-![Animation: a point light moves away from the 35 mm lens, then toward the frame corner, then around the frame, with the blur shape shown beside the ray drawing](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_journey_35.gif)
+![Animation: a point light moves away from the 35 mm lens, then toward the frame corner, then around the frame, with the blur shape shown beside the ray drawing](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_journey_35.gif)
 
 The 35 mm design, traced: a point light moves from 0.7 m (in focus) out to 20 m, then to the frame corner, then once around the frame. Left: the rays through the lens. Right: the blur shape on the sensor.
 
 A lens bends the rays from a point of light so that they meet again at one spot. If they meet in front of the sensor, they have spread out again by the time they arrive, and the dot becomes a disc. The lens's aberrations light that disc unevenly, which gives it a bright rim. Toward the frame edge the cone of light is tilted, and the rims of the glass cut it from two sides; what gets through is an off-center slice, the cat-eye.
 
-<img src="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_psf_grid_35.png" width="560" alt="Grid of traced 35 mm blur shapes: five positions from the frame center to the corner, by five distances from 0.98 m to 20 m">
+<img src="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_psf_grid_35.png" width="560" alt="Grid of traced 35 mm blur shapes: five positions from the frame center to the corner, by five distances from 0.98 m to 20 m">
 
 The 35 mm shapes the renderer uses. Rows: frame center (top) to corner (bottom). Columns: distance of the light, 0.98 m to 20 m, with focus at 0.7 m. Up is the direction away from the frame center.
 

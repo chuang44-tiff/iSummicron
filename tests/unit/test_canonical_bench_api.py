@@ -66,3 +66,9 @@ def test_canonical_bench_api_return_linear_keeps_u8_md5(tmp_path):
     res = render_image(opts)
     assert res.output_linear is not None
     assert _md5(out) == G1_MD5
+
+
+def test_canonical_bench_engine_is_reference():
+    from summicron.render.api import RenderOptions
+
+    assert RenderOptions.canonical_bench(IMAGE, G1_FOCUS_XY).engine == "reference"

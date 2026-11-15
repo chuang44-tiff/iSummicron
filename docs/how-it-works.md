@@ -6,7 +6,7 @@ Photographers call the look of the out-of-focus parts of a picture *bokeh*. A ph
 
 iSummicron ray-traces public lens designs to get those shapes, then paints them into your photo using its depth map. This page shows where the shapes come from and how they get into the picture.
 
-The same material exists as an interactive page, with a draggable animation, lens switches and plain-disc/real-lens toggles: [open it in your browser](https://chuang44-tiff.github.io/iSummicron/). It is also attached to each Release as [isummicron_pipeline.html](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/isummicron_pipeline.html), one self-contained file to download and open offline. The figures below are still frames from that page.
+The same material exists as an interactive page, with a draggable animation, lens switches and plain-disc/real-lens toggles: [open it in your browser](https://chuang44-tiff.github.io/iSummicron/). It is also attached to each Release as [isummicron_pipeline.html](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/isummicron_pipeline.html), one self-contained file to download and open offline. The figures below are still frames from that page.
 
 Contents:
 
@@ -29,7 +29,7 @@ Below is one synthetic scene, rendered twice. Hundreds of point lights sit far b
 
 | Plain round disc | Ray-traced 50 mm f/2 |
 | --- | --- |
-| ![The Christmas-lights scene blurred with the same round disc everywhere](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_xmas_50_plain_disc.jpg) | ![The same scene blurred with the ray-traced 50 mm f/2 shapes](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_xmas_50_real_lens.jpg) |
+| ![The Christmas-lights scene blurred with the same round disc everywhere](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_xmas_50_plain_disc.jpg) | ![The same scene blurred with the ray-traced 50 mm f/2 shapes](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_xmas_50_real_lens.jpg) |
 
 Left: every light becomes the same plain round disc (a stand-in made for this comparison, not a model of any phone). Right: the blur shapes come from a ray-traced 50 mm f/2 double-Gauss design.
 
@@ -45,7 +45,7 @@ The pattern that one point of light leaves on the sensor has a name: the *point 
 
 The four steps below walk through this with the 35 mm design. The ray paths inside the lens and every blur spot come from the traced data.
 
-![Animation: a point light moves away from the 35 mm lens, then toward the frame corner, then around the frame, with the blur shape shown beside the ray drawing](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_journey_35.gif)
+![Animation: a point light moves away from the 35 mm lens, then toward the frame corner, then around the frame, with the blur shape shown beside the ray drawing](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_journey_35.gif)
 
 The whole journey as a 12-second loop. The bar under the drawing follows the light: 0.7 m to 20 m straight ahead, then from the frame center to the corner, then once around the frame. The animation and the step drawings below have small labels and are best viewed on a wide screen.
 
@@ -53,7 +53,7 @@ How to read the drawing: the light's side is not to scale. Real distances run fr
 
 ### 1. In focus
 
-![Side view of the 35 mm lens with rays from a light at 0.7 m meeting on the sensor; the spot is a single sharp point](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_journey_35_s1_onaxis_0p7m_focus.png)
+![Side view of the 35 mm lens with rays from a light at 0.7 m meeting on the sensor; the spot is a single sharp point](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_journey_35_s1_onaxis_0p7m_focus.png)
 
 A point light at 0.7 m, the focus distance: the rays meet on the sensor and land as a sharp dot.
 
@@ -61,7 +61,7 @@ The lens is focused at 0.7 m and the sensor is fixed there. The rays that get th
 
 ### 2. Farther away
 
-![The same view with the light at 20 m; the rays cross before the sensor and the spot is a bright-rimmed disc](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_journey_35_s2_onaxis_20m.png)
+![The same view with the light at 20 m; the rays cross before the sensor and the spot is a bright-rimmed disc](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_journey_35_s2_onaxis_20m.png)
 
 The light at 20 m, straight ahead: the rays cross in front of the sensor and the dot grows into a bright-rimmed disc.
 
@@ -76,11 +76,11 @@ Blur follows 1/distance, so the disc grows quickly over the first meter or two a
 
 ### 3. Toward the edge
 
-![The light at 20 m, two thirds of the way to the corner; some rays are stopped by the glass rims and the spot is an egg shape](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_journey_35_s3_20m_midring.png)
+![The light at 20 m, two thirds of the way to the corner; some rays are stopped by the glass rims and the spot is an egg shape](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_journey_35_s3_20m_midring.png)
 
 The same far light, 67% of the way to the corner: the rims clip the tilted cone (gray rays) and the spot becomes an egg.
 
-![The light at 20 m near the frame corner; most rays are stopped and the spot is a small rounded box](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_journey_35_s3_20m_corner.png)
+![The light at 20 m near the frame corner; most rays are stopped and the spot is a small rounded box](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_journey_35_s3_20m_corner.png)
 
 Near the corner (98%): most of the cone is clipped, and the spot shrinks into a small rounded box.
 
@@ -95,7 +95,7 @@ Shape sizes at 20 m, along the radius × across, and the share of light that get
 
 ### 4. Around the frame
 
-![A photo frame filled with a 5 by 7 grid of traced shapes, each turned to face away from the center; one circled shape is enlarged at the right](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_journey_35_s4_around_frame.png)
+![A photo frame filled with a 5 by 7 grid of traced shapes, each turned to face away from the center; one circled shape is enlarged at the right](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_journey_35_s4_around_frame.png)
 
 Every far light gets the shape for its distance from the center, turned to face away from the center. Shapes are drawn 7.1× real size.
 
@@ -107,11 +107,11 @@ The real lens turns each shape to face exactly away from the center (36° for th
 
 These are the blur shapes the renderer uses: the 35 mm lens by default, the 50 mm with `--lens 50`. There is one per ring of the frame, counted from the center out to the corner, and per distance. Each is drawn with the direction away from the frame center pointing up.
 
-![Grid of traced 35 mm blur shapes: five positions from the frame center to the corner, by five distances from 0.98 m to 20 m](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_psf_grid_35.png)
+![Grid of traced 35 mm blur shapes: five positions from the frame center to the corner, by five distances from 0.98 m to 20 m](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_psf_grid_35.png)
 
 35 mm f/2. Rows: position from the frame center (0%) to the corner (100%). Columns: distance of the light, with focus at 0.7 m. Each cell shows 95 × 95 px of a photo 5712 px on its long edge.
 
-![The same grid for the 50 mm lens; the shapes are larger and the corner shapes are flattened ovals](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_psf_grid_50.png)
+![The same grid for the 50 mm lens; the shapes are larger and the corner shapes are flattened ovals](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_psf_grid_50.png)
 
 50 mm f/2, same layout. Each cell shows 149 × 149 px.
 
@@ -145,7 +145,7 @@ The focus slot (0.7 m) is stored as a single bright pixel, not a traced spot. Th
 
 | 35 mm f/2 | 50 mm f/2 |
 | --- | --- |
-| [![All 132 kernels of the 35 mm table as a grid of tiles](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_kernels_atlas_35.png)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_kernels_atlas_35.png) | [![All 132 kernels of the 50 mm table as a grid of tiles](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_kernels_atlas_50.png)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_kernels_atlas_50.png) |
+| [![All 132 kernels of the 35 mm table as a grid of tiles](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_kernels_atlas_35.png)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_kernels_atlas_35.png) | [![All 132 kernels of the 50 mm table as a grid of tiles](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_kernels_atlas_50.png)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_kernels_atlas_50.png) |
 
 Frame center (top) to corner (bottom); 0.7 m (left) to 20 m (right). These are the complete tables: one row per ring, 12 in all, and one column per distance slot, 11 in all, starting with the single-pixel 0.7 m focus slot. Click an atlas for full size.
 
@@ -187,7 +187,7 @@ A depth map records how far away each part of the scene is. The renderer takes a
 
    For each pixel, iSummicron takes the diopter distance from the focus point and maps it onto the lens's 11 distance slots. A pixel 1 diopter behind your subject gets the blur the lens gives a light 1 diopter behind its own 0.7 m focus.
 
-   <picture><source media="(prefers-color-scheme: dark)" srcset="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_diopter_layers_dark.png"><img src="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_diopter_layers.png" alt="The 11 depth layers as dots on a line, spaced by diopters, from the 0.70 m focus layer to the 20 m layer"></picture>
+   <picture><source media="(prefers-color-scheme: dark)" srcset="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_diopter_layers_dark.png"><img src="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_diopter_layers.png" alt="The 11 depth layers as dots on a line, spaced by diopters, from the 0.70 m focus layer to the 20 m layer"></picture>
 
    The 11 depth layers on a diopter scale: equal gaps mean equal changes in blur.
 
@@ -197,11 +197,11 @@ A depth map records how far away each part of the scene is. The renderer takes a
 6. **Blend across the frame.** The frame is split into 12 rings from the center to the corner. Each pixel blends the shapes of the two nearest rings, weighted by its distance between them. Going around the circle, there is no blending (see the next step).
 7. **Turn the shape to face away from the center.** The lens shapes are stored once per ring, pointing up. The renderer turns them to face away from the center, but in **8 fixed steps of 45°**. Every pixel in a 45° slice of the frame gets the same turn.
 
-   <picture><source media="(prefers-color-scheme: dark)" srcset="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_wedges_8_dark.png"><img src="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_wedges_8.png" alt="A frame cut into 8 wedges of 45 degrees around its center, with one arrow per wedge pointing away from the center"></picture>
+   <picture><source media="(prefers-color-scheme: dark)" srcset="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_wedges_8_dark.png"><img src="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_wedges_8.png" alt="A frame cut into 8 wedges of 45 degrees around its center, with one arrow per wedge pointing away from the center"></picture>
 
    The frame is cut into 8 slices of 45° around its center. Each slice uses the shape turned to the slice's middle angle (arrows).
 
-   A shape can therefore be up to 22.5° off its true angle, and its orientation changes by 45° from one slice to the next. Tests with 16 and 32 steps reduced the angle error but made a render about 1.6× and 2.8× slower. In side-by-side renders viewed normally (tone-mapped), 8, 16 and 32 steps looked the same, so the setting stays at 8.
+   A shape can therefore be up to 22.5° off its true angle, and its orientation changes by 45° from one slice to the next. Tests with 16 and 32 steps reduced the angle error but made a render about 1.6× and 2.8× slower. Looked at closely, more steps turn the bokeh tails visibly better: the shapes face the center more exactly. At normal viewing size the difference is small, so iSummicron keeps 8 for speed.
 8. **Highlights get their own pass.** Bright points such as bulbs, reflections and sun glints are split off before blurring. A local "is this a small bright spot?" test favors isolated lights over broad bright areas.
 
    These highlights are painted with the same lens shape, scaled to carry a fixed 2× the light's own energy. A bulb therefore stays a bright, well-defined shape, and big and small shapes carry the same light. Everything else is blurred with the shape scaled to keep its total light.
@@ -246,7 +246,7 @@ z_t = 1 / (1/0.7 − e)                 equivalent distance, 0.7 … 20 m
 
 **The weight curves.** Layer *d*'s weight rises from slot *d*−1 to slot *d*, stays at 1 from slot *d* to slot *d*+1, and falls back to 0 by slot *d*+2. The rises and falls are smooth S-curves (3*t*² − 2*t*³) in meters. Then each pixel's weights are divided by their sum, so they always add up to exactly one. Below 0.7 m, layer 0 takes everything; beyond 20 m, layer 10 does.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_layer_weights_dark.png"><img src="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_layer_weights.png" alt="Weight curves of the 11 layers plotted against mapped distance on a diopter-spaced axis"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_layer_weights_dark.png"><img src="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_layer_weights.png" alt="Weight curves of the 11 layers plotted against mapped distance on a diopter-spaced axis"></picture>
 
 Weights of the 11 layers against *z_t*, drawn on a diopter scale. The in-focus layer is teal.
 
@@ -288,13 +288,15 @@ rot = −(θ_a + 90°)                    turns "up" to point at the wedge cente
 
 **Why 8.** More wedges cost time: about 1.6× at 16 and 2.8× at 32 (35 mm lens, 2048 px; median of 3 runs on an Apple M4 Max).
 
-| Wedges | Worst angle error | Render time (35 mm lens, 2048 px, Apple M4 Max, median of 3 runs) |
+| Wedges | Worst angle error | Render time (35 mm lens, 2048 px, Apple M4 Max, median of 3 runs, before 0.5.2) |
 | --- | --- | --- |
 | 8 (used) | ±22.5° | 18.0 s |
 | 16 | ±11.25° | 28.6 s |
 | 32 | ±5.6° | 49.6 s |
 
-In side-by-side tone-mapped renders, the three settings looked the same by eye, so the renderer stays at 8.
+These times were measured before the 0.5.2 speed-ups; the ratios between them are what matters.
+
+Looked at closely, 16 and 32 wedges turn the bokeh tails visibly better: the shapes face the center more exactly. At normal viewing size the difference is small, so iSummicron keeps 8 for speed.
 
 ### How the focus point stays sharp
 
@@ -336,6 +338,12 @@ The top-hat keeps bright features smaller than about 31 px and drops broad brigh
 
 **Putting it back.** Both parts go through the same layer and ring weights. They are added together in linear light, before the final checks, the in-focus snap and the tone step. Pixels on the in-focus layer skip the split, so in-focus highlights pass through untouched.
 
+### Render engines
+
+The pipeline above describes the `reference` engine: for each depth layer it does one frame-sized convolution per shape (since 0.5.2 the default engine computes only the output rows that the layer's weight map uses). The two opt-in engines (`--engine tiled` and `--engine gpu`) compute the same thing in a different order. The frame is cut into tiles. Each tile is convolved with the same shape bank, in an FFT of side 324 (shapes up to 99 px, which covers 2048 renders) or 512 (up to 255 px, which covers full size), with enough overlap that the seams are exact (overlap-save). Each pixel's ring blend, 45° turn and depth-layer weights are unchanged. Tiles that hold no light in a layer are skipped, and the highlight pass only visits tiles with bright pixels. On the CPU this is `tiled`; `gpu` runs the same tile FFTs and products on the Apple GPU with MLX in float32.
+
+Because the arithmetic is reordered, the two engines match `reference` to within rounding error, not bit for bit: at most 1e-5 relative in linear light for `tiled` and 1e-4 for `gpu`, and within 1 level in the 8-bit output. [Usage: Render engines](usage.md#render-engines) has the exact limits. Occlusion compositing runs on `reference` only.
+
 ### Key numbers
 
 | Item | Value |
@@ -353,6 +361,7 @@ The top-hat keeps bright features smaller than about 31 px and drops broad brigh
 | In-focus snap | cos² fade, gone at slot 1 (0.4069 D) |
 | Highlight split | threshold 1.0 (SDR white), soft knee ± 0.2, 31 px top-hat, floor 0.10, normalized at the 99th percentile |
 | Highlight stamp | same shape × 2 (energy-scaled) |
+| Tile FFT side (`tiled`, `gpu`) | 324 (shapes up to 99 px) or 512 (up to 255 px) |
 | Memory budget | 12 GiB by default; above it the renderer stops and suggests a smaller `--downres` |
 
 ## Why HDR matters for bokeh
@@ -361,11 +370,11 @@ Out-of-focus lights only look like lights if the renderer knows how bright they 
 
 An iPhone Portrait photo also carries an *HDR gain map*, which records how much brighter the highlights really were. In the sample kitchen photo, the brightest input highlights reach about 3.5× white instead of stopping at 1.0, and about 20% of the pixels have a color channel brighter than white. With that light restored, the blurred lamps stay bright and keep their shape.
 
-![Two crops of blurred pendant lamps from the kitchen photo: left without the gain map, right with it](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_hdr_kitchen_lamps_none_vs_auto.jpg)
+![Two crops of blurred pendant lamps from the kitchen photo: left without the gain map, right with it](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_hdr_kitchen_lamps_none_vs_auto.jpg)
 
 Blurred pendant lamps behind the subject, at 100%. Left: `--hdr-source none` (SDR). Right: `auto` (gain map); the lamps are brighter, fuller discs.
 
-![Two crops of the in-focus subject's hair against a bright wall: left without the gain map, right with it](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_hdr_kitchen_hair_none_vs_auto.jpg)
+![Two crops of the in-focus subject's hair against a bright wall: left without the gain map, right with it](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_hdr_kitchen_hair_none_vs_auto.jpg)
 
 The in-focus subject against a bright wall, same order. The two are nearly the same, because the subject is sharp and the wall is broad, not a point light.
 
@@ -399,7 +408,7 @@ The terms used here and above:
 
 iSummicron only knows how far a pixel is from focus in diopters, not which side it is on. A light that is a given number of diopters *in front of* your subject is blurred exactly like one the same number of diopters *behind* it, and with the same lens shapes: the ones traced behind the focus. Both sides stop growing at the same maximum blur, 1.38 diopters from focus. With the default settings, for a subject at 0.7 m that means anything nearer than about 0.36 m gets the maximum blur; for a subject at 1 m, anything nearer than about 0.42 m.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_front_vs_back_dark.png"><img src="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_front_vs_back.png" alt="A diopter axis centered on the in-focus subject, with blur discs growing by the same amount on the near and far sides"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_front_vs_back_dark.png"><img src="https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_front_vs_back.png" alt="A diopter axis centered on the in-focus subject, with blur discs growing by the same amount on the near and far sides"></picture>
 
 The same blur on both sides of the subject, set by diopter distance alone, using the behind-focus shapes.
 
@@ -413,13 +422,13 @@ A real lens is different in front of focus:
 
 The sample kitchen photo, left to right: the input, the iPhone's own Portrait mode (its Portrait image, upscaled from 600×800), the 50 mm render and the default 35 mm render.
 
-[![Kitchen photo: input, iPhone Portrait, 50 mm f/2 and 35 mm f/2](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_kitchen_4up.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_kitchen_4up.jpg)
+[![Kitchen photo: input, iPhone Portrait, 50 mm f/2 and 35 mm f/2](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_kitchen_4up.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_kitchen_4up.jpg)
 
 ## Christmas-lights demo
 
 The README hero shows the scene as a 2× crop of the bottom-left corner: the sharp input, a plain round disc, and the real 35 mm blur.
 
-![Input, plain round disc and real-lens 35 mm blur, bottom-left corner 2 times](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_xmas_zoom_input_disc_35.jpg)
+![Input, plain round disc and real-lens 35 mm blur, bottom-left corner 2 times](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_xmas_zoom_input_disc_35.jpg)
 
 The plain-disc panel uses the same scene, depth and settings with every 35 mm kernel replaced by a uniform round disc whose radius matches the traced kernel's 90% encircled-energy radius, so the discs look slightly smaller than the real-lens shapes, whose tails extend further.
 
@@ -431,13 +440,13 @@ The demo's lights use the renderer's default highlight setting: each bulb is spr
 
 The 35 mm and 50 mm lenses on the same corner crop:
 
-[![Christmas lights: input, 35 mm f/2 and 50 mm f/2](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_xmas_zoom_input_35_50.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_xmas_zoom_input_35_50.jpg)
+[![Christmas lights: input, 35 mm f/2 and 50 mm f/2](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_xmas_zoom_input_35_50.jpg)](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_xmas_zoom_input_35_50.jpg)
 
 ### 50 mm f/2
 
 | Plain disc | Real lens |
 | --- | --- |
-| ![The scene at 50 mm framing with plain round discs](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_xmas_50_plain_disc.jpg) | ![The scene with the ray-traced 50 mm f/2](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_xmas_50_real_lens.jpg) |
+| ![The scene at 50 mm framing with plain round discs](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_xmas_50_plain_disc.jpg) | ![The scene with the ray-traced 50 mm f/2](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_xmas_50_real_lens.jpg) |
 
 What to look at: the spinning bokeh. Toward the edges the shapes flatten along the line to the center, so the rings of lights seem to swirl. This lens is traced beyond its design field, so the effect is stronger than the design intended for a 50 mm frame; see [How the shapes are traced](#how-the-shapes-are-traced).
 
@@ -445,7 +454,7 @@ What to look at: the spinning bokeh. Toward the edges the shapes flatten along t
 
 | Plain disc | Real lens |
 | --- | --- |
-| ![The scene at 35 mm framing with plain round discs](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_xmas_35_plain_disc.jpg) | ![The scene with the ray-traced 35 mm f/2](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_xmas_35_real_lens.jpg) |
+| ![The scene at 35 mm framing with plain round discs](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_xmas_35_plain_disc.jpg) | ![The scene with the ray-traced 35 mm f/2](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_xmas_35_real_lens.jpg) |
 
 What to look at: the corners. The wider lens clips much harder at the edge (under a fifth of the light gets through at the corner). Its corner shapes shrink into small rounded boxes with bright sides.
 
@@ -453,14 +462,14 @@ What to look at: the corners. The wider lens clips much harder at the edge (unde
 
 | Plain disc | Real lens |
 | --- | --- |
-| ![Corner close-up, 35 mm, plain discs](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_corner_35_plain_disc.jpg) | ![Corner close-up, 35 mm, real lens](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_corner_35_real_lens.jpg) |
-| ![Corner close-up, 50 mm, plain discs](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_corner_50_plain_disc.jpg) | ![Corner close-up, 50 mm, real lens](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.1/fig_corner_50_real_lens.jpg) |
+| ![Corner close-up, 35 mm, plain discs](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_corner_35_plain_disc.jpg) | ![Corner close-up, 35 mm, real lens](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_corner_35_real_lens.jpg) |
+| ![Corner close-up, 50 mm, plain discs](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_corner_50_plain_disc.jpg) | ![Corner close-up, 50 mm, real lens](https://github.com/chuang44-tiff/iSummicron/releases/download/v0.5.2/fig_corner_50_real_lens.jpg) |
 
 The top-left corner of each version: 35 mm in the top row, 50 mm in the bottom row. With the 50 mm real lens, the ovals lean along the swirl.
 
 ## Limits
 
-- **Turning in 8 steps.** Shapes face away from the center to within ±22.5°, and the orientation changes by 45° from one slice to the next. In normal (tone-mapped) viewing, 8, 16 and 32 steps looked the same; more steps cost render time.
+- **Turning in 8 steps.** Shapes face away from the center to within ±22.5°, and the orientation changes by 45° from one slice to the next. More steps turn the shapes visibly better when looked at closely, but the difference is small at normal viewing size and they cost render time, so 8 are used.
 - **Blur crosses the subject's outline.** By default, background blur is not stopped at the subject's outline. With real-lens blur this changes only a hairline, not visible at normal viewing; see [Subject edges and occlusion](#subject-edges-and-occlusion).
 - **HDR needs macOS.** The gain-map path that restores real highlight brightness runs on macOS only. Elsewhere renders are SDR and the brightest lights come out dimmer.
 - **No edge darkening.** The trace records how much light gets through at each position (down to roughly 18–28% in the corners), and the clipping changes the shape. The renderer does not use this to darken the corners: each shape keeps its full brightness.

@@ -45,5 +45,8 @@ jobs:
       - name: Lint
         run: ruff check summicron/
 
+      # Includes the tiled-engine tests. The gpu engine needs mlx, which this job does
+      # not install (no `gpu` extra above): tests marked `gpu` skip cleanly, and -rs
+      # prints each skip reason.
       - name: FAST suite
         run: python -m pytest tests/ -m "not slow" -p no:xdist -q -rs --durations=15
