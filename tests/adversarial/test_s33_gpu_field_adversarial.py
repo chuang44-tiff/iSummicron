@@ -44,6 +44,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import inspect
+import os
 import sys
 import warnings
 from functools import lru_cache
@@ -59,7 +60,9 @@ from summicron.render._artifacts import default_tensor_path
 from tests.fixtures import tolerance as tol
 
 _GPU_REASON = eg.availability()
-_IN_GPU_ENV = sys.prefix.rstrip("/").endswith("isummicron-gpu")
+# Opt-in: ISUMMICRON_REQUIRE_GPU=1 means "this run must exercise the gpu tests", so an
+# unavailable mlx/Metal fails loudly instead of skipping.
+_REQUIRE_GPU = os.environ.get("ISUMMICRON_REQUIRE_GPU") == "1"
 _C = tol.TIERS["C"]
 
 E_IMP = 1e-4        # R-C12 per-impulse ceilings (spec G-C5a); never loosened
@@ -68,7 +71,7 @@ CENTROID_PX = 0.01
 
 
 def _gpu_test(fn):
-    fn = pytest.mark.skipif(_GPU_REASON is not None and not _IN_GPU_ENV,
+    fn = pytest.mark.skipif(_GPU_REASON is not None and not _REQUIRE_GPU,
                             reason=f"gpu engine unavailable: {_GPU_REASON}")(fn)
     return pytest.mark.gpu(fn)
 

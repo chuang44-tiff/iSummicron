@@ -140,13 +140,13 @@ def test_availability_none_when_usable_and_reason_when_metal_off():
 
 @pytest.mark.gpu
 def test_gpu_env_sentinel_fails_not_skips():
-    """In the dedicated mlx env, a missing mlx or Metal is a FAILURE (G-C0).
-    In any other env this passes trivially (the gpu tests skip there)."""
-    if not sys.prefix.rstrip("/").endswith("isummicron-gpu"):
+    """With ISUMMICRON_REQUIRE_GPU=1, a missing mlx or Metal is a FAILURE (G-C0).
+    Without it this passes trivially (the gpu tests skip)."""
+    if os.environ.get("ISUMMICRON_REQUIRE_GPU") != "1":
         return
     try:
         import mlx.core as mx
     except ImportError as e:     # pragma: no cover
-        pytest.fail(f"dedicated mlx env without importable mlx.core: {e}")
+        pytest.fail(f"ISUMMICRON_REQUIRE_GPU=1 without importable mlx.core: {e}")
     if not mx.metal.is_available():
-        pytest.fail("dedicated mlx env without a Metal device")
+        pytest.fail("ISUMMICRON_REQUIRE_GPU=1 without a Metal device")

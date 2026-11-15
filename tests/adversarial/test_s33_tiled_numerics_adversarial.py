@@ -265,9 +265,15 @@ def test_tile_size_changes_stay_within_tolerance_of_each_other():
         _assert_tier_b(ref5, got5, f"N={n}")
 
 
-def test_chunk_and_spectrum_batch_sizes_do_not_change_a_bit(monkeypatch):
+def test_chunk_and_spectrum_batch_sizes_do_not_change_the_result(monkeypatch):
     """_CHUNK (units per batched irfft2) and _SPEC_BATCH (kernels per batched
-    rfft2) only regroup independent transforms: the 5-tuple is bit-equal."""
+    rfft2) only regroup independent transforms: the 5-tuple is unchanged.
+
+    Bit-identity holds on the dev machine but not across FFT backends: the
+    CI runner's pocketfft rounds a batched transform differently from a
+    single one in the last float32 bit. The public promise is float rounding
+    scale (same tolerance as test_over_scatter_fused.py), far below any real
+    regrouping bug."""
     H, W = 80, 70
     img = _noise(H, W, 3)
     img[30:33, 40:43] = 4.0
@@ -278,7 +284,11 @@ def test_chunk_and_spectrum_batch_sizes_do_not_change_a_bit(monkeypatch):
         monkeypatch.setattr(eng, "_SPEC_BATCH", sb)
         got = _tiled(kw, _tile_n=40)
         for i in range(5):
-            assert np.array_equal(base[i], got[i]), (chunk, sb, i)
+            np.testing.assert_allclose(
+                got[i], base[i], rtol=1e-6,
+                atol=1e-6 * max(1.0, float(np.abs(base[i]).max())),
+                err_msg=str((chunk, sb, i)),
+            )
 
 
 # --------------------------------------------------------------------------

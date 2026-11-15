@@ -429,7 +429,19 @@ def test_kernel_spectra_places_kxk_block_at_origin():
     for k, g in zip(ks, got):
         # the bank's spectra are float64 transforms rounded once to complex64
         want = F.rfft2(k.astype(np.float64), s=(40, 40)).astype(np.complex64)
-        assert np.array_equal(want, g)
+        # Bit-equal on the dev machine; the CI runner's FFT backend rounds a
+        # batched transform differently in the last bit, so the promise is
+        # float rounding scale relative to the spectrum magnitude.
+        np.testing.assert_allclose(
+            g, want, rtol=1e-6, atol=1e-6 * float(np.abs(want).max())
+        )
+        # structural intent: the KxK block sits at the origin, zero elsewhere
+        back = F.irfft2(g.astype(np.complex128), s=(40, 40))
+        scale = float(np.abs(k).max())
+        np.testing.assert_allclose(back[:17, :17], k, atol=1e-5 * scale)
+        mask = np.ones((40, 40), bool)
+        mask[:17, :17] = False
+        assert float(np.abs(back[mask]).max()) <= 1e-5 * scale
 
 
 def test_rotation_sign_on_asymmetric_kernel():

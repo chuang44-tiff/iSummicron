@@ -27,6 +27,7 @@ dedicated mlx env, where they run (and fail) instead of skipping.
 """
 from __future__ import annotations
 
+import os
 import sys
 import warnings
 from functools import lru_cache
@@ -42,11 +43,13 @@ from tests.fixtures import tolerance as tol
 from tests.fixtures.truth import format_ratio, stress_ratio
 
 _GPU_REASON = eg.availability()
-_IN_GPU_ENV = sys.prefix.rstrip("/").endswith("isummicron-gpu")
+# Opt-in: ISUMMICRON_REQUIRE_GPU=1 means "this run must exercise the gpu tests", so an
+# unavailable mlx/Metal fails loudly instead of skipping.
+_REQUIRE_GPU = os.environ.get("ISUMMICRON_REQUIRE_GPU") == "1"
 
 needs_gpu = [
     pytest.mark.gpu,
-    pytest.mark.skipif(_GPU_REASON is not None and not _IN_GPU_ENV,
+    pytest.mark.skipif(_GPU_REASON is not None and not _REQUIRE_GPU,
                        reason=f"gpu engine unavailable: {_GPU_REASON}"),
 ]
 

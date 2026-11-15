@@ -2,6 +2,20 @@
 
 All notable changes to **iSummicron** are documented in this file. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.5.2.1] — 2026-11-15
+
+### Fixed
+
+- The FAST test suite no longer assumes that a batched FFT and a single FFT agree to the last bit. On GitHub's macOS CI machines two tests differed from the development machine by one float32 rounding step; they now compare at float rounding scale (relative 1e-6), and one of them also checks that the kernel sits at the origin of its spectrum. No change to rendering: same outputs, tensors and checksums as 0.5.2.
+
+### Documentation
+
+- `NOTICE` now lists MLX (MIT license, Apple Inc.), the optional dependency behind the `gpu` extra. MLX is installed from PyPI and is not bundled in the wheel.
+
+### Packaging
+
+- The `gpu` tests run when the environment variable `ISUMMICRON_REQUIRE_GPU` is set, instead of depending on a conda environment name.
+
 ## [0.5.2] — 2026-11-15
 
 Speed. The default render is faster with the same output, and two opt-in engines are much faster.
@@ -164,6 +178,7 @@ JPG output is bit-exact at md5 level across 0.1.0 ↔ 0.2.0 on the canonical ben
 - Bring-your-own-tensor format documented in README.
 - Memory guard rejects pathological renders with actionable `--downres N` suggestion.
 
+[0.5.2.1]: https://github.com/chuang44-tiff/iSummicron/compare/v0.5.2...v0.5.2.1
 [0.5.2]: https://github.com/chuang44-tiff/iSummicron/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/chuang44-tiff/iSummicron/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/chuang44-tiff/iSummicron/compare/v0.4.0...v0.5.0
